@@ -8,9 +8,9 @@ Converts Microsoft Word's DOCX to LaTeX. Developed by [le-tex](https://www.le-te
 ### download the latest release
 Download the latest [docx2tex release](https://github.com/transpect/docx2tex/releases)
 
-…or get source via Git. Please note that you have to add the `--recursive` option in order to clone docx2hub with submodules.
+…or get source via Git. All formerly separate components are included in this repository, so a plain clone is sufficient:
 ```
-git clone https://github.com/transpect/docx2tex --recursive
+git clone https://github.com/baradhili/pptx2beemer
 ```
 
 ## requirements
