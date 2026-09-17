@@ -20,7 +20,10 @@
   
   <p:choose>
     <p:when test="$image-output-dir ne ''">
-      <p:variable name="source-dir-uri" select="concat(/dbk:hub/dbk:info/dbk:keywordset/dbk:keyword[@role eq 'source-dir-uri'], 'word/media')"/>
+      <p:variable name="source-dir-uri" select="(
+        /dbk:hub/dbk:info/dbk:keywordset/dbk:keyword[@role eq 'media-dir-uri'],
+        concat(/dbk:hub/dbk:info/dbk:keywordset/dbk:keyword[@role eq 'source-dir-uri'], 'word/media')
+        )[1]"/>
       <p:viewport match="//dbk:imagedata" name="copy-images">
         <p:variable name="filename" select="replace(dbk:imagedata/@fileref, '^.+/(.+)$', '$1')"/>
         <p:variable name="new-fileref" select="if($image-output-dir eq '.')
