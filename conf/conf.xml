@@ -103,13 +103,10 @@
   </xsl:function>
   
   <!-- tex document header, set declarations such as documentclass and usepackage -->
-  <preamble>% docx2tex 1.10 --- ``TeX without any tariffs (local regulations may vary)''
+  <preamble>% pptx2beemer --- PPTX to LaTeX beamer, based on docx2tex/xml2tex
+    % https://github.com/baradhili/pptx2beemer
     %
-    % docx2tex is Open Source and 
-    % you can download it on GitHub:
-    % https://github.com/transpect/docx2tex
-    % 
-    \documentclass[12pt]{scrbook}
+    \documentclass{beamer}
     \usepackage{iftex}
     \usepackage{amsmath}
     \usepackage{amssymb}
@@ -133,13 +130,6 @@
       \setsansfont{Arial}
     \fi
     \usepackage{anyfontsize}
-    <!-- KOMA raises "not recommended" advisories for packages this conf
-         deliberately builds on: titlesec (one \titleformat per docx Heading
-         style, straight chapters) and fancyhdr (\fancypagestyle per Word
-         section, rule widths, \headruleskip). None of the KOMA features the
-         advisories mention (headsepline, \setkomafont, …) are used — filter
-         them, ahead of the first flagged package, to keep build logs clean -->
-    <xsl:text>\usepackage{silence}\WarningFilter{scrbook}{Usage of package}&#xa;</xsl:text>
     <xsl:if test="//dbk:imagedata">
       <xsl:text>\usepackage{graphicx}&#xa;</xsl:text>
       <!-- savebox for srcRect-cropped images; dedicated and without @ because the
@@ -461,19 +451,9 @@
         <xsl:text>}&#xa;</xsl:text>
       </xsl:for-each>
     </xsl:if>
-    <xsl:if test="empty($docx-headers)">
-      <!-- no Word header parts: nothing head/foot-ish is rendered by the block
-           above, so fancyhdr is loaded only for the plain redefinition below
-           (KOMA advisory filtered in the preamble) -->
-      <xsl:text>\usepackage{fancyhdr}&#xa;</xsl:text>
-    </xsl:if>
-    <!-- Word shows a page number only when a footer part defines one; documents
-         without header/footer parts get no page number at all (the class default
-         footer would otherwise print one in the default font). Chapter-opening
-         pages (and anything KOMA resets to plain) stay clean. -->
-    <xsl:text>\fancypagestyle{plain}{\fancyhf{}\renewcommand{\headrulewidth}{0pt}\renewcommand{\footrulewidth}{0pt}}&#xa;</xsl:text>
-    <xsl:text>\pagestyle{empty}&#xa;</xsl:text>
-    <xsl:sequence select="if(exists($langs)) 
+    <!-- beamer draws its own headlines/footlines; the docx fancyhdr machinery
+         does not apply to presentations -->
+    <xsl:sequence select="if(exists($langs))
                           then string-join(xml2tex:langs-to-latex-pkg( $langs ), '&#xa;') 
                           else string-join(xml2tex:langs-to-latex-pkg( 'en' ), '&#xa;')"/>
     <xsl:text>&#xa;</xsl:text>
@@ -1004,6 +984,26 @@
     </rule>
   </template>
   
+  <!-- beamer: each slide section becomes a frame -->
+
+  <template context="dbk:section[@role = 'slide']">
+    <rule name="frame" type="env" break-before="1">
+      <text/>
+    </rule>
+  </template>
+
+  <template context="dbk:section[@role = 'slide']/dbk:title">
+    <rule name="frametitle" type="cmd" break-before="1">
+      <param/>
+    </rule>
+  </template>
+
+  <template context="dbk:section[@role = 'slide']/dbk:subtitle">
+    <rule name="framesubtitle" type="cmd" break-before="1">
+      <param/>
+    </rule>
+  </template>
+
   <!-- itemized lists -->
 
   <template context="dbk:itemizedlist">
