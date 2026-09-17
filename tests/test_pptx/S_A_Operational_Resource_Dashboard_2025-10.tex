@@ -1,0 +1,81 @@
+% pptx2beemer --- PPTX to LaTeX beamer, based on docx2tex/xml2tex 
+% https://github.com/baradhili/pptx2beemer 
+% 
+\documentclass{beamer} 
+\usepackage{iftex} 
+\usepackage{amsmath} 
+\usepackage{amssymb} 
+\usepackage{amsfonts} 
+\usepackage{amsxtra} 
+\usepackage{wasysym} 
+\usepackage{isomath} 
+\usepackage{mathtools} 
+% txfonts must load after amsmath (its \iint etc. collide with amsmath's 
+% otherwise) and before fontspec/tgheros so the docx fonts win for text 
+\usepackage{txfonts} 
+\ifPDFTeX 
+\usepackage[T1]{fontenc} 
+\usepackage[utf8]{inputenc} 
+\usepackage{tgheros} 
+\renewcommand{\familydefault}{\sfdefault} 
+\else 
+% LuaLaTeX/XeLaTeX: use the real fonts from the docx, no substitution 
+\usepackage{fontspec} 
+\setmainfont{Arial} 
+\setsansfont{Arial} 
+\fi 
+\usepackage{anyfontsize} 
+\usepackage{hyperref} 
+\usepackage{multirow} 
+\usepackage{tabularx} 
+\usepackage{color} 
+\usepackage{textcomp} 
+\usepackage{tipa}
+\usepackage{upgreek} 
+\usepackage{enumerate} 
+\usepackage{tensor} 
+\usepackage{pifont} 
+\usepackage{ulem} 
+\usepackage{xfrac} 
+\usepackage{arydshln} 
+\setlength{\parskip}{0pt}
+\setlength{\parindent}{0pt}
+\usepackage[english]{babel}
+
+\begin{document}
+
+\begin{frame}
+\frametitle{Operational Resource Dashboard}
+\framesubtitle{Staff Resource Management Report}October 2025
+\end{frame}
+
+\begin{frame}
+\frametitle{Overview}
+\begin{itemize}
+\item \textbf{Purpose}: Ensure optimal allocation of staff resources.
+\item \textbf{Frequency}: Monthly.
+\item \textbf{Data Sources}: Empower reporting, ePMO demand ADO.
+\end{itemize}
+A snapshot of staff utilisation, workload balance, and 
+
+resource allocation trends.
+\end{frame}
+
+\begin{frame}
+\frametitle{Key Metrics Summary}
+\framesubtitle{Data not clean or complete.}
+\begin{itemize}
+\item \textbf{Overall Utilization Rate: 100\%}
+\item \textbf{Bench Strength: 0}
+\item \textbf{Unallocated Demand (Next 2 Months): 0}
+\item \textbf{Hiring Pipeline: }
+\begin{itemize}
+\item 1 open requisitions pending acceptance, 
+\item 2 on hold pending further confirmation
+\end{itemize}
+
+\end{itemize}
+
+\end{frame}
+
+\end{document}

@@ -1,12 +1,17 @@
 .zcode/
-*.pptx.tmp/
+tests/**/*.pptx.tmp/
 # generated conversion and LaTeX build artifacts
 tests/**/*.debug/
-*.d2t.log
-*.lualatex.log
-*.nav
-*.out
-*.snm
-*.toc
-*.aux
+tests/**/*.log
+tests/**/*.nav
+tests/**/*.out
+tests/**/*.snm
+tests/**/*.toc
+tests/**/*.aux
 xproc-util/simple-progress-msg/xpl/debug/
+
+tests/**/*.csv
+
+tests/**/*.log
+
+tests/**/*.xml
