@@ -1,6 +1,10 @@
 <?xml version="1.0"?>
 <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
 
+    <rewriteURI uriStartString="http://transpect.io/pptx2hub/" rewritePrefix="../"/>
+
+    <!-- legacy URI of this library when it was the docx2hub project; still used
+         for loading xsl/fontmaps.catalog.xml as a collection -->
     <rewriteURI uriStartString="http://transpect.io/docx2hub/" rewritePrefix="../"/>
-    
+
 </catalog>
