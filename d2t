@@ -2,9 +2,9 @@
 
 usage() {
     echo ""
-    echo "docx2tex"
+    echo "pptx2beemer"
     echo ""
-    echo "Usage: d2t [options ...] <docx file>"
+    echo "Usage: d2t [options ...] <pptx file>"
     echo ""
     echo "Options:"
     echo "   -o    path to custom output directory"
@@ -120,13 +120,13 @@ fi
 
 # file as 1st argument
 FILE="$1"
-if ! [[ $FILE =~ \.docx$ ]]; then
-    echo "Only docx files are supported."
+if ! [[ $FILE =~ \.pptx$ ]]; then
+    echo "Only pptx files are supported."
     exit 1
 fi
 
 # set basename
-BASENAME="$(basename "$(basename "$FILE" .docx)" .docm)"
+BASENAME="$(basename "$FILE" .pptx)"
 BASENAME="${BASENAME// /_}"
 
 # output directory path
@@ -183,7 +183,7 @@ fi
 DEBUG_DIR_URI="${DEBUG_DIR_URI// /%20}"
 OUT_DIR_PSEUDOURI="${OUT_DIR// /%20}"
 
-FILE_CP="$OUT_DIR/$BASENAME.docx"
+FILE_CP="$OUT_DIR/$BASENAME.pptx"
 cp "$FILE" "$FILE_CP" 2>&1 2>>"$LOG"
 
 # check if file exists
@@ -192,7 +192,7 @@ if [ ! -f "$FILE" ]; then
     usage
 fi
 
-echo "starting docx2tex"
+echo "starting pptx2beemer"
 
 if [ "$DEBUG" = "yes" ]; then
     echo "debug mode: $DEBUG"
@@ -213,13 +213,13 @@ if [ "$DEBUG" = "yes" ]; then
     echo ""
 fi
 
-# docx2tex xproc pipeline
+# pptx2beemer xproc pipeline
 HEAP=$HEAP "$CALABASH" \
     $INPUTCUSTOMDRIVER \
     -o result="$OUT_DIR_PSEUDOURI/$BASENAME.tex" \
     -o hub="$OUT_DIR_PSEUDOURI/$BASENAME.xml" \
     "$DIR/xpl/docx2tex.xpl" \
-    docx="$FILE_CP" \
+    pptx="$FILE_CP" \
     conf="$CONF" \
     custom-xsl="$CUSTOMXSL" \
     conf-template="$OUT_DIR/$BASENAME.csv" \
@@ -231,7 +231,7 @@ HEAP=$HEAP "$CALABASH" \
     debug=$DEBUG \
     debug-dir-uri=$DEBUG_DIR_URI \
     status-dir-uri=$DEBUG_DIR_URI/status \
-    2>&1 2>>"$LOG" || exitonerror $? docx2tex
+    2>&1 2>>"$LOG" || exitonerror $? pptx2beemer
 echo "writing texfile => $OUT_DIR/$BASENAME.tex"
 
 # convert SVGs written by the pipeline (drawingml2svg shapes) to PDF for
@@ -260,4 +260,4 @@ if [ "$PDF" = "yes" ]; then
     echo "writing pdf => $OUT_DIR/$BASENAME.pdf"
 fi
 echo ""
-echo "docx2tex finished."
+echo "pptx2beemer finished."

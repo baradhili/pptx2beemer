@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<p:declare-step 
+<p:declare-step
   xmlns:p="http://www.w3.org/ns/xproc"
   xmlns:c="http://www.w3.org/ns/xproc-step"
-  xmlns:docx2hub="http://transpect.io/docx2hub"
+  xmlns:pptx2hub="http://transpect.io/pptx2hub"
   xmlns:docx2tex="http://transpect.io/docx2tex"
   xmlns:xml2tex="http://transpect.io/xml2tex"
   xmlns:tr="http://transpect.io"
@@ -11,7 +11,7 @@
   type="docx2tex:main">
 
   <p:documentation>
-    docx2tex:main generates a LaTeX text document from a DOCX file. The step can be
+    docx2tex:main generates a LaTeX text document from a PPTX file. The step can be
     used standalone or as library in other XProc pipelines.
   </p:documentation>
   
@@ -111,31 +111,21 @@
     </p:documentation>
   </p:option>
   
-  <p:option name="docx" required="true">
+  <p:option name="pptx" required="true">
     <p:documentation>
-      Path to the docx file.
+      Path to the pptx file.
     </p:documentation>
   </p:option>
-  
-  <p:option name="mml-space-handling" select="'xml-space'">
-    <p:documentation>
-      How Math spaces should be treated in MathML. 'xml-space' results in more 
-      &lt;mml:mtext&gt; (LaTeX: $\text{ }$) whereas 'mspace' leads to more $\:$.  
-    </p:documentation>
-  </p:option>
-	
   <p:option name="custom-xsl" select="''" required="false">
     <p:documentation>
       Path to an XSLT to be applied on the intermediate Hub XML document.
     </p:documentation>
   </p:option>
-  
   <p:option name="custom-font-maps-dir" required="false">
     <p:documentation>
-      Path (file URI) to a directory containing fontmaps for docx2hub and the mathtype-extension.
+      Path (file URI) to a directory containing fontmaps for the mathtype-extension.
     </p:documentation>
   </p:option>
-  
   <p:option name="image-output-dir" select="''" required="false">
     <p:documentation>
       Provide a custom directory name for the image file references. If the option 
@@ -144,7 +134,7 @@
     </p:documentation>
   </p:option>
   
-  <p:option name="conf-template" select="replace($docx, '\.docx$', '.csv')" required="false">
+  <p:option name="conf-template" select="replace($pptx, '\.[a-zA-Z]+$', '.csv')" required="false">
     <p:documentation>
       Path to the generated CSV-based configuration template.
     </p:documentation>
@@ -168,7 +158,7 @@
   <p:import href="generate-conf-template.xpl"/>
   <p:import href="rename-and-copy-files.xpl"/>
   
-  <p:import href="http://transpect.io/docx2hub/xpl/docx2hub.xpl"/>
+  <p:import href="http://transpect.io/pptx2hub/xpl/pptx2hub.xpl"/>
   <p:import href="http://transpect.io/xml2tex/xpl/xml2tex.xpl"/>
   <p:import href="http://transpect.io/xproc-util/simple-progress-msg/xpl/simple-progress-msg.xpl"/>
   <p:import href="http://transpect.io/xproc-util/store-debug/xpl/store-debug.xpl"/>
@@ -187,53 +177,12 @@
 		</p:input>
 		<p:with-option name="status-dir-uri" select="$status-dir-uri"/>
 	</tr:simple-progress-msg>
-  
+
   <p:sink/>
 
-  <p:group name="custom-font-maps">
-    <p:output port="result" sequence="true"/>
-    <p:try>
-      <p:group>
-        <p:directory-list>
-          <p:with-option name="path" select="replace($custom-font-maps-dir, '([^/])/?$', '$1/')"/>
-          <p:with-option name="include-filter" select="'.*\.xml'"/>
-        </p:directory-list>
-        <p:for-each>
-          <p:iteration-source select="c:directory/c:file"/>
-          <p:output port="result" sequence="true"/>
-          <p:variable name="file" select="concat(replace($custom-font-maps-dir, '([^/])/?$', '$1/'), //@name)"/>
-          <p:load>
-            <p:with-option name="href" select="$file"/>
-          </p:load>
-        </p:for-each>
-      </p:group>
-      <p:catch>
-        <p:xslt template-name="init">
-          <p:input port="source">
-            <p:empty/>
-          </p:input>
-          <p:input port="stylesheet">
-            <p:inline>
-              <xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
-                <xsl:template name="init">
-                  <xsl:message>No custom-font-maps loaded.</xsl:message>
-                </xsl:template>
-              </xsl:stylesheet>
-            </p:inline>
-          </p:input>
-          <p:input port="parameters">
-            <p:empty/>
-          </p:input>
-        </p:xslt>
-      </p:catch>
-    </p:try>
-  </p:group>
-  
-  <p:sink/>
-  
   <!--  *
         * load xml2tex config or generate one from CSV plain text file
-        * --> 
+        * -->
   
   <docx2tex:load-config name="load-config" collect-all-xsl="yes">
     <p:with-option name="conf" select="$conf"/>
@@ -244,25 +193,15 @@
   
   <p:sink/>
   
-  <docx2hub:convert name="docx2hub">
-    <p:documentation>Converts DOCX to Hub XML.</p:documentation>
-    <p:input port="custom-font-maps">
-      <p:pipe port="result" step="custom-font-maps"/>
-    </p:input>
-    <p:with-option name="docx" select="$docx"/>
-    <p:with-option name="mml-space-handling" select="$mml-space-handling"/>
-    <p:with-option name="mathtype2mml" select="$mtef-source"/>
-    <p:with-option name="discard-alternate-choices" select="'no'"/>
-    <p:with-option name="create-svg" select="'true'"/>
-    <p:with-option name="lang-variant" select="'yes'"/>
-    <p:with-option name="srcpaths" select="'no'"/>
+  <pptx2hub:convert name="pptx2hub">
+    <p:documentation>Converts PPTX to Hub XML.</p:documentation>
+    <p:with-option name="pptx" select="$pptx"/>
     <p:with-option name="debug" select="$debug"/>
     <p:with-option name="debug-dir-uri" select="$debug-dir-uri"/>
     <p:with-option name="status-dir-uri" select="$status-dir-uri"/>
-    <p:with-option name="use-filename-from-http-response" select="$use-filename-from-http-response"/>
     <p:with-option name="extract-dir" select="$extract-dir"/>
-    <p:with-option name="include-header-and-footer" select="'yes'"/>
-  </docx2hub:convert>
+    <p:with-option name="use-filename-from-http-response" select="$use-filename-from-http-response"/>
+  </pptx2hub:convert>
   
   <docx2tex:generate-conf-template>
     <p:documentation>Retrieves all styles from the Hub document and generates
@@ -296,12 +235,12 @@
     <p:with-option name="status-dir-uri" select="$status-dir-uri"/>
   </docx2tex:evolve-hub>
 	
-	<tr:simple-progress-msg file="docx2tex-docx2hub.txt">
+	<tr:simple-progress-msg file="docx2tex-pptx2hub.txt">
 		<p:input port="msgs">
 			<p:inline>
 				<c:messages>
-					<c:message xml:lang="en">Conversion from DOCX to Hub XML finished</c:message>
-					<c:message xml:lang="de">Konvertierung von DOCX nach Hub XML abgeschlossen</c:message>
+					<c:message xml:lang="en">Conversion from PPTX to Hub XML finished</c:message>
+					<c:message xml:lang="de">Konvertierung von PPTX nach Hub XML abgeschlossen</c:message>
 				</c:messages>
 			</p:inline>
 		</p:input>
