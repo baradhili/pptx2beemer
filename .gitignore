@@ -1,2 +1,12 @@
 .zcode/
 *.pptx.tmp/
+# generated conversion and LaTeX build artifacts
+tests/**/*.debug/
+*.d2t.log
+*.lualatex.log
+*.nav
+*.out
+*.snm
+*.toc
+*.aux
+xproc-util/simple-progress-msg/xpl/debug/

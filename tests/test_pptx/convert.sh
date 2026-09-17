@@ -1,18 +1,19 @@
 #!/bin/bash
 # Convert every pptx file in this script's directory to LaTeX beamer
-# with the pptx2beemer pipeline (d2t).
+# with the pptx2beemer pipeline (d2t), then try to render the generated
+# TeX to a PDF with lualatex.
 #
 # Usage:
 #   ./convert.sh [d2t options]
 #
 # Examples:
-#   ./convert.sh        convert all pptx files in this directory
+#   ./convert.sh        convert all pptx files here and render PDFs
 #   ./convert.sh -d     ... with debug output (debug/ directory)
-#   ./convert.sh -p     ... and compile a PDF with lualatex
 #
-# Options are passed on to d2t; see d2t -h for the full list.
-# Output files (.tex, .xml, .csv template, debug/, .pdf with -p)
-# are written next to the pptx files.
+# Options are passed on to d2t (note: -p is unnecessary, the PDF step
+# is built in and best-effort — a failed render only logs a warning).
+# Output files (.tex, .xml, .csv template, .pdf, .log, debug/) are
+# written next to the pptx files.
 
 set -euo pipefail
 
@@ -33,8 +34,31 @@ if [ ${#pptx_files[@]} -eq 0 ]; then
     exit 1
 fi
 
+render_pdf() {
+    local tex="$1" base log
+    base="${tex%.tex}"
+    log="$base.lualatex.log"
+    if ! command -v lualatex >/dev/null 2>&1; then
+        echo "warning: lualatex not found, skipping PDF rendering"
+        return 0
+    fi
+    echo "rendering PDF for $(basename "$base") ..."
+    if (cd "$SCRIPT_DIR" && lualatex -interaction=nonstopmode "$(basename "$tex")" >"$log" 2>&1); then
+        echo "writing pdf => $base.pdf"
+    else
+        echo "warning: PDF rendering failed, see $log"
+        tail -n 15 "$log" || true
+    fi
+}
+
 for f in "${pptx_files[@]}"; do
     echo ""
     echo "=== Converting $(basename "$f") ==="
     "$D2T" "$@" "$f"
+    tex="${f%.pptx}.tex"
+    if [ -f "$tex" ]; then
+        render_pdf "$tex"
+    else
+        echo "warning: $tex not generated, skipping PDF rendering"
+    fi
 done
