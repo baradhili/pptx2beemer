@@ -53,7 +53,7 @@ PDFLATEX=lualatex
 MTEFSOURCE="ole"
 TABLEMODEL=""
 TABLEGRID=""
-LISTMODE=""
+LISTMODE="none"
 PDF=no
 REFS=yes
 DEBUG=no
@@ -239,13 +239,15 @@ echo "writing texfile => $OUT_DIR/$BASENAME.tex"
 # -d/-p 72: the svgs carry unitless width/height in Word points, but
 # rsvg-convert reads them as px (96dpi) and would shrink every PDF to 75%
 SVG_COUNT=0
-for svg in $(find "$OUT_DIR" -name "$BASENAME-svg-*.svg" 2>/dev/null); do
+STEM="${BASENAME//_/-}"
+# null-delimited: the output directory may contain spaces
+while IFS= read -r -d '' svg; do
     if rsvg-convert -d 72 -p 72 -f pdf -o "${svg%.svg}.pdf" "$svg" 2>>"$LOG"; then
         SVG_COUNT=$((SVG_COUNT+1))
     else
         echo "warning: could not convert $svg to PDF" >> "$LOG"
     fi
-done
+done < <(find "$OUT_DIR" -name "$STEM-svg-*.svg" -print0 2>/dev/null)
 if [ "$SVG_COUNT" -gt 0 ]; then
     echo "converted $SVG_COUNT svg image(s) to pdf"
 fi

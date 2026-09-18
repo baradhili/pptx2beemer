@@ -1,3 +1,61 @@
+# Changelog — pptx canvas conversion (pixel-faithful beamer output)
+
+Goal of this pass: reproduce the OnlyOffice (x2t) rendering of the four test decks in
+`tests/example [1-4]` as closely as possible, measuring against PNG renders of the x2t PDF
+exports (ImageMagicker `compare -metric AE`, fuzz 5 %, 100 dpi).
+
+Results: example 1 2.5-3.6 % differing pixels per slide, example 2 4.3 %, example 4 8.5 %,
+example 3 (230 slides) 1.8-8.8 % on sampled slides — with word baselines matching the
+reference within 0.1 pt on text-driven slides.
+
+## What changed
+
+- **pptx2hub/xsl/pml2hub.xsl — rewritten as a canvas converter** (XSLT 3.0). Every shape
+  keeps its absolute geometry (EMU -> pt = big points) plus fully resolved formatting:
+  font family through the layout/master/theme font scheme (`+mn-lt`/`+mj-lt`), font size,
+  color (scheme colors incl. lumMod/lumOff/shade/tint), alignment, line spacing,
+  spcBef/spcAft, marL/indent, bullets (char, size %, color, Wingdings/Symbol PUA mapped to
+  Unicode), anchor, insets, autofit font scale, and quarter-turn rotation. Shapes without
+  text become filled rectangles; freeform and non-rect preset shapes become SVG (reusing
+  the drawingml2svg path machinery, incl. gradients); bgRef backgrounds resolve through
+  the theme's bgFillStyleLst; groups recurse with chOff/chExt transforms; `hidden` shapes
+  and layout/master decoration *text* are not rendered (reference renderer behaviour);
+  slide-number fields render the actual number.
+- **conf/conf.xml — beamer canvas mode.** One `[plain]` frame per slide on paper sized to
+  the pptx sldSz; every shape is a textpos block (1 bp modules, origin at the paper's
+  top-left corner). Paragraph emission implements the measured PowerPoint line model
+  (100 % spacing = pitch 1.2 x size, first baseline 0.96 x size below the para top,
+  descent 0.24 x size), strut-controlled line boxes, exact inter-paragraph glue
+  (`\vskip` + `\prevdepth=-1000pt`), no hyphenation, PowerPoint-style alignment. SVG art
+  is written via `xsl:result-document` and referenced as `<stem>-svg-<n>.pdf`; fonts are
+  declared per family with `\IfFontExistsTF` fallback to Liberation Sans (what OnlyOffice
+  substitutes), each missing font logged as `pptx2beemer WARNING: font ...`.
+- **d2t** — list-mode defaults to `none` (pptx lists carry their own bullet geometry),
+  SVG-to-PDF conversion handles spaces in paths and hyphenates underscores in the stem.
+- **tests/example */convert.sh** — fixed the .tex name derivation for basenames with
+  spaces, cleans stale SVG art, deployed to all four example directories.
+
+## Fonts needed by the test decks
+
+Installed and used directly: Arial, Calibri (incl. Light), Trebuchet MS, Verdana, Times
+New Roman, Open Sans (all weights), Josefin Sans, Lato (incl. Light), Roboto (incl.
+Light), Gill Sans, Carlito, Helvetica. Missing (pipeline substitutes Liberation Sans,
+matching the OnlyOffice reference render; install for exact glyphs): **Tahoma, Tahoma
+Bold, Poppins, Poppins SemiBold/Bold, Graphik, Graphik Light, League Spartan, Mukta
+ExtraLight, Franklin Gothic Medium, Wingdings** (bullet glyphs are mapped to Unicode, so
+Wingdings is only needed for exotic chars). Wingdings/Symbol bullet characters are mapped
+via an in-stylesheet table (F06C -> U+25CF etc.).
+
+## Known gaps (visible in the AE numbers)
+
+Freeform vector art is converted path-by-path but rotation angles other than 90/180/270,
+path gradients and border lines on shapes are not yet handled; gradient angles are
+approximated by their two-stop linearisation; tables render as simple fixed-width grids
+without borders; anti-aliasing differences between the two rasterizers account for most
+of the residual delta on text-only slides.
+
+---
+
 # Changelog — `front-page-layout` vs `master`
 
 Goal of this branch: make the docx2tex pipeline reproduce the Word/OnlyOffice rendering of

@@ -15,3 +15,9 @@ tests/**/*.csv
 tests/**/*.log
 
 tests/**/*.xml
+# generated beamer output and shape art
+tests/**/*.tex
+tests/**/*.pdf
+tests/**/*-svg-*.svg
+tests/**/*-svg-*.pdf
+tests/**/__MACOSX/

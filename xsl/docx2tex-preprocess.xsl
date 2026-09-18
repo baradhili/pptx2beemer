@@ -358,6 +358,7 @@
        (header/footer boxes render in restricted horizontal mode). -->
 
   <xsl:template match="para[not(.//text()) or (every $i in .//text() satisfies matches($i, '^\s+$'))][not(* except tab)][not(@css:page-break-after)]
+                       [not(@role eq 'pptx-rect')]
                        [not(ancestor::v:textbox) or ancestor::dbk:div[@role = ('docx2hub:header', 'docx2hub:footer')]]"
                 mode="docx2tex-preprocess"/>
   

@@ -3,6 +3,7 @@
 <?xml-model href="http://transpect.io/xml2tex/schema/xml2tex.rng" type="application/xml" schematypens="http://purl.oclc.org/dsdl/schematron"?>
 <set xmlns="http://transpect.io/xml2tex"  
      xmlns:tr="http://transpect.io"
+     xmlns:pptx2hub="http://transpect.io/pptx2hub"
      xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
   
   <import href="conf.charmap.xml"/>
@@ -19,11 +20,27 @@
   
   <xsl:variable name="xerif" as="xs:boolean" select="false()"/>
   <xsl:variable name="root" as="document-node()" select="root()"/>
-  <xsl:variable name="path"       as="xs:string"  select="tr:path(base-uri())"/>
-  <xsl:variable name="basename"   as="xs:string"  select="tr:basename(/dbk:hub/@xml:base)"/>
+  <!-- pptx hubs have no @xml:base. Their base URI is the extracted
+       presentation part, .../OUTDIR/&#60;basename&#62;.pptx.tmp/ppt/presentation.xml,
+       which yields both the output directory and the basename. (The
+       source-dir-uri keyword is unusable here: the escape-bad-chars step
+       TeX-escapes its underscores.) -->
+  <xsl:variable name="pptx-base-stripped" as="xs:string?"
+                select="if (contains(base-uri(/dbk:hub), '.pptx.tmp/'))
+                        then substring-before(base-uri(/dbk:hub), '.pptx.tmp/')
+                        else ()"/>
+  <xsl:variable name="basename"   as="xs:string"  select="if (/dbk:hub/@xml:base)
+                                                         then tr:basename(/dbk:hub/@xml:base)
+                                                         else if (exists($pptx-base-stripped))
+                                                         then tokenize($pptx-base-stripped, '/')[last()]
+                                                         else ''"/>
+  <xsl:variable name="path"       as="xs:string"  select="if (exists($pptx-base-stripped))
+                                                         then substring-before($pptx-base-stripped, concat('/', $basename))
+                                                         else tr:path(base-uri(/dbk:hub))"/>
   <xsl:variable name="colors"     as="xs:string*"
                 select="(
                          //@css:background-color,
+                         //@css:marker-color,
                          //@css:color[not(every $i in  tr:hex-rgb-color-to-ints(.) satisfies $i &lt; 35
                                           or parent::*[(@role, @name) = ('ZFinlineequation', 'ZFequation')]
                                           or ancestor::dbk:para/dbk:phrase[@role = ('ZFinlineequation', 'ZFequation', 'Hyperlink')]
@@ -138,7 +155,7 @@
         <xsl:text>\newsavebox{\docxcroppedimagebox}&#xa;</xsl:text>
       </xsl:if>
     </xsl:if>
-    <xsl:if test="/dbk:hub/@css:page-width">
+    <xsl:if test="/dbk:hub/@css:page-width[empty(/dbk:hub/@pptx2hub:slides)]">
       <xsl:text>\usepackage{geometry}&#xa;</xsl:text>
       <!-- docx lengths (twips/20) are PDF points (bp); TeX pt are 0.37 % smaller, so emit
            bp units. Use a named standard size when the dimensions match one (portrait),
@@ -229,9 +246,10 @@
     <!-- absolutely positioned VML text boxes (Word floating shapes) render via
          textpos at their Word coordinates; modules of 1pt make the textblock
          arguments plain points from the paper's top-left corner -->
-    <xsl:if test="exists(//w:pict[v:shape/v:textbox][contains(v:shape/@style, 'position:absolute')][contains(v:shape/@style, 'margin-left')][contains(v:shape/@style, 'margin-top')])
+    <xsl:if test="empty(/dbk:hub/@pptx2hub:slides)
+                  and (exists(//w:pict[v:shape/v:textbox][contains(v:shape/@style, 'position:absolute')][contains(v:shape/@style, 'margin-left')][contains(v:shape/@style, 'margin-top')])
                   or exists(//dbk:imagedata[@css:position-left][@css:position-top]
-                                       [not(ancestor::dbk:div[@role = ('docx2hub:header', 'docx2hub:footer')])])">
+                                       [not(ancestor::dbk:div[@role = ('docx2hub:header', 'docx2hub:footer')])]))">
       <xsl:text>\usepackage[absolute]{textpos}&#xa;</xsl:text>
       <xsl:text>\setlength{\TPHorizModule}{1pt}\setlength{\TPVertModule}{1pt}\textblockorigin{0pt}{0pt}&#xa;</xsl:text>
     </xsl:if>
@@ -457,6 +475,24 @@
                           then string-join(xml2tex:langs-to-latex-pkg( $langs ), '&#xa;') 
                           else string-join(xml2tex:langs-to-latex-pkg( 'en' ), '&#xa;')"/>
     <xsl:text>&#xa;</xsl:text>
+    <xsl:if test="exists(/dbk:hub/@pptx2hub:slides)">
+      <xsl:text>% ===================== pptx canvas mode =====================&#xa;</xsl:text>
+      <xsl:value-of select="concat('\geometry{paperwidth=', number(replace(/dbk:hub/@css:page-width, 'pt$', '')), 'bp, paperheight=', number(replace(/dbk:hub/@css:page-height, 'pt$', '')), 'bp}&#xa;')"/>
+      <xsl:text>\setbeamertemplate{navigation symbols}{}&#xa;</xsl:text>
+      <xsl:text>\setbeamertemplate{headline}{}\setbeamertemplate{footline}{}&#xa;</xsl:text>
+      <xsl:text>\setbeamertemplate{sidebar left}{}\setbeamertemplate{sidebar right}{}&#xa;</xsl:text>
+      <xsl:text>\setbeamersize{text margin left=0pt, text margin right=0pt}&#xa;</xsl:text>
+      <xsl:text>\setbeamercolor{normal text}{fg=black}&#xa;</xsl:text>
+      <xsl:text>\setbeamercolor{background canvas}{bg=white}&#xa;</xsl:text>
+      <xsl:text>\usepackage[absolute,overlay]{textpos}&#xa;</xsl:text>
+      <xsl:text>\setlength{\TPHorizModule}{1bp}\setlength{\TPVertModule}{1bp}\textblockorigin{0pt}{0pt}&#xa;</xsl:text>
+      <!-- one font family macro per used family; missing fonts fall back to
+           Liberation Sans, like OnlyOffice does when rendering the pptx -->
+      <xsl:for-each select="$tr:pptx-families">
+        <xsl:variable name="letter" select="substring('ABCDEFGHIJKLMNOPQRSTUVWXYZ', position(), 1)" as="xs:string"/>
+        <xsl:value-of select="concat('\IfFontExistsTF{', ., '}{\newfontfamily\pptxfont', $letter, '{', ., '}}{\newfontfamily\pptxfont', $letter, '{Liberation Sans}\typeout{pptx2beemer WARNING: font &quot;', ., '&quot; not found - install it and rerun; using Liberation Sans}}&#xa;')"/>
+      </xsl:for-each>
+    </xsl:if>
     <xsl:for-each select="xml2tex:rgb-to-tex-color( $colors )">
       <xsl:value-of select="concat('\define', ., '&#xa;')"/>
     </xsl:for-each>
@@ -902,7 +938,9 @@
          values are all equal and index-of() would return the same position for
          every one of them -->
     <xsl:variable name="svg-index" select="count($svg-images[. &lt;&lt; current()]) + 1" as="xs:integer"/>
-    <xsl:variable name="svg-filename" select="concat($basename, '-svg-', $svg-index, '.svg')" as="xs:string"/>
+    <!-- underscores do not survive the charmap escaping of hrefs -->
+    <xsl:variable name="file-stem" select="translate($basename, '_', '-')" as="xs:string"/>
+    <xsl:variable name="svg-filename" select="concat($file-stem, '-svg-', $svg-index, '.svg')" as="xs:string"/>
     <xsl:variable name="svg-path" select="concat($path, '/', $svg-filename)" as="xs:string"/>
     <!-- the svg is written inside <name>.docx.tmp/word/ (d2t unzip layout, like
          the media files); the d2t wrapper converts it to PDF there (LuaLaTeX
@@ -2581,6 +2619,462 @@
     <xsl:value-of select="replace(parent::dbk:entry/@css:min-height, '[a-z]+$', '')"/>
     <xsl:text>pt}</xsl:text>
     <xsl:next-match/>
+  </template>
+  <!-- ==================================================================================
+       pptx canvas mode: absolutely positioned re-rendering of presentation slides.
+       The hub produced by pptx2hub carries, for every shape, css:left/top/width/height
+       (in pt = big points, EMU/12700) plus fully resolved fonts, sizes, colors,
+       alignment, line spacing, paragraph spacing, indents and bullet properties.
+       These templates (last in the file = highest priority over the generic docx
+       rules) emit one beamer [plain] frame per slide with one textpos block per
+       shape. All dimensions are bp: a pptx pt is 1/12700 inch = exactly one big point.
+       ================================================================================== -->
+
+  <!-- hhea metrics of the fonts that the documents use (measured from the
+       installed font files). Unknown families resolve to the fallback that
+       OnlyOffice substitutes for missing fonts (Liberation Sans). -->
+  <xsl:variable name="tr:pptx-font-metrics" as="element(tr:fm)*">
+    <tr:fm font="Arial" asc="0.9053" desc="0.2119" gap="0.0327"/>
+    <tr:fm font="Liberation Sans" asc="0.9053" desc="0.2119" gap="0.0327"/>
+    <tr:fm font="Helvetica" asc="0.77" desc="0.23" gap="0"/>
+    <tr:fm font="Calibri" asc="0.75" desc="0.25" gap="0.2207"/>
+    <tr:fm font="Carlito" asc="0.9521" desc="0.2686" gap="0"/>
+    <tr:fm font="Times New Roman" asc="0.8911" desc="0.2163" gap="0.0425"/>
+    <tr:fm font="Trebuchet MS" asc="0.939" desc="0.2222" gap="0"/>
+    <tr:fm font="Verdana" asc="1.0054" desc="0.21" gap="0"/>
+    <tr:fm font="Tahoma" asc="1.0054" desc="0.21" gap="0"/>
+    <tr:fm font="Open Sans" asc="1.0688" desc="0.293" gap="0"/>
+    <tr:fm font="Open Sans Light" asc="1.0688" desc="0.293" gap="0"/>
+    <tr:fm font="Open Sans SemiBold" asc="1.0688" desc="0.293" gap="0"/>
+    <tr:fm font="Lato" asc="0.987" desc="0.213" gap="0"/>
+    <tr:fm font="Lato Light" asc="0.987" desc="0.213" gap="0"/>
+    <tr:fm font="Roboto" asc="0.9277" desc="0.2441" gap="0"/>
+    <tr:fm font="Roboto Light" asc="0.9277" desc="0.2441" gap="0"/>
+    <tr:fm font="Josefin Sans" asc="0.75" desc="0.25" gap="0"/>
+    <tr:fm font="Gill Sans" asc="0.682" desc="0.318" gap="0.2"/>
+    <tr:fm font="Segoe UI" asc="1.0577" desc="0.2626" gap="0"/>
+  </xsl:variable>
+
+  <xsl:function name="tr:pptx-metrics" as="element(tr:fm)">
+    <xsl:param name="family" as="xs:string?"/>
+    <xsl:sequence select="($tr:pptx-font-metrics[@font eq $family],
+                           $tr:pptx-font-metrics[@font eq 'Liberation Sans'])[1]"/>
+  </xsl:function>
+
+  <!-- numeric value of a css pt length (a pptx pt is a big point; keep the number) -->
+  <xsl:function name="tr:pptx-num" as="xs:double">
+    <xsl:param name="pt" as="xs:string?"/>
+    <xsl:sequence select="xs:double(replace(($pt, '0pt')[1], 'pt$', ''))"/>
+  </xsl:function>
+
+  <xsl:function name="tr:pptx-round" as="xs:string">
+    <xsl:param name="v" as="xs:double"/>
+    <xsl:sequence select="string(round($v * 100) div 100)"/>
+  </xsl:function>
+
+  <!-- the \definecolor name that xml2tex generates for a hex color -->
+  <xsl:function name="tr:pptx-color-name" as="xs:string">
+    <xsl:param name="hex" as="xs:string"/>
+    <xsl:sequence select="if (exists(tr:color-hex-rgb-to-keyword($hex)))
+                          then tr:color-hex-rgb-to-keyword($hex)[1]
+                          else concat('color-', upper-case(substring-after($hex, '#')))"/>
+  </xsl:function>
+
+  <!-- the font family names that the document uses -->
+  <xsl:variable name="tr:pptx-families" as="xs:string+"
+                select="distinct-values(//dbk:sidebar[@role eq 'pptx-textbox']//@css:font-family[normalize-space()])"/>
+
+  <!-- helper: family to preamble macro letter -->
+  <xsl:function name="tr:pptx-font-letter" as="xs:string">
+    <xsl:param name="family" as="xs:string?"/>
+    <xsl:variable name="i" select="index-of($tr:pptx-families, $family)[1]" as="xs:integer?"/>
+    <xsl:sequence select="if (exists($i) and $i le 26)
+                          then substring('ABCDEFGHIJKLMNOPQRSTUVWXYZ', $i, 1)
+                          else 'A'"/>
+  </xsl:function>
+
+  <!-- ============================ slide = beamer [plain] frame ==================== -->
+
+  <template context="dbk:section[@role eq 'slide']">
+    <xsl:variable name="bg" select="(@css:background-color, '#FFFFFF')[1]" as="xs:string"/>
+    <xsl:text>\setbeamercolor{background canvas}{bg=</xsl:text>
+    <xsl:value-of select="tr:pptx-color-name($bg)"/>
+    <xsl:text>}&#xa;\begin{frame}[plain]% slide: </xsl:text>
+    <xsl:value-of select="replace(normalize-space(dbk:title), '([%&amp;#{}])', '\\$1')"/>
+    <xsl:text>&#xa;</xsl:text>
+    <xsl:apply-templates select="* except dbk:title" mode="#current"/>
+    <xsl:text>&#xa;\end{frame}&#xa;</xsl:text>
+  </template>
+
+  <template context="dbk:section[@role eq 'slide']/dbk:title">
+    <!-- the visible title is drawn as a positioned textbox; the structural
+         title only feeds the comment above -->
+  </template>
+
+  <!-- ============================ text boxes ==================== -->
+
+  <template context="dbk:sidebar[@role eq 'pptx-textbox']">
+    <xsl:variable name="L" select="tr:pptx-num(@css:left)" as="xs:double"/>
+    <xsl:variable name="T" select="tr:pptx-num(@css:top)" as="xs:double"/>
+    <xsl:variable name="W" select="tr:pptx-num(@css:width)" as="xs:double"/>
+    <xsl:variable name="H" select="tr:pptx-num(@css:height)" as="xs:double"/>
+    <xsl:variable name="pl" select="tr:pptx-num(@css:padding-left)" as="xs:double"/>
+    <xsl:variable name="pr" select="tr:pptx-num(@css:padding-right)" as="xs:double"/>
+    <xsl:variable name="pt" select="tr:pptx-num(@css:padding-top)" as="xs:double"/>
+    <xsl:variable name="pb" select="tr:pptx-num(@css:padding-bottom)" as="xs:double"/>
+    <xsl:variable name="iw" select="max(($W - $pl - $pr, 1))" as="xs:double"/>
+    <xsl:variable name="ih" select="max(($H - $pt - $pb, 1))" as="xs:double"/>
+    <!-- shape background fill: a filled rect behind the text -->
+    <xsl:if test="exists(@css:background-color)">
+      <xsl:text>\begin{textblock}{</xsl:text>
+      <xsl:value-of select="tr:pptx-round($W)"/>
+      <xsl:text>}(</xsl:text>
+      <xsl:value-of select="tr:pptx-round($L)"/>
+      <xsl:text>,</xsl:text>
+      <xsl:value-of select="tr:pptx-round($T)"/>
+      <xsl:text>){\color{</xsl:text>
+      <xsl:value-of select="tr:pptx-color-name(@css:background-color)"/>
+      <xsl:text>}\rule{</xsl:text>
+      <xsl:value-of select="tr:pptx-round($W)"/>
+      <xsl:text>bp}{</xsl:text>
+      <xsl:value-of select="tr:pptx-round($H)"/>
+      <xsl:text>bp}}\end{textblock}&#xa;</xsl:text>
+    </xsl:if>
+    <xsl:text>\begin{textblock}{</xsl:text>
+    <xsl:value-of select="tr:pptx-round($iw)"/>
+    <xsl:text>}(</xsl:text>
+    <xsl:value-of select="tr:pptx-round($L + $pl)"/>
+    <xsl:text>,</xsl:text>
+    <xsl:value-of select="tr:pptx-round($T + $pt)"/>
+    <xsl:text>)</xsl:text>
+    <xsl:choose>
+      <xsl:when test="@css:vertical-align eq 'bottom'">
+        <xsl:text>\parbox[t][</xsl:text>
+        <xsl:value-of select="tr:pptx-round($ih)"/>
+        <xsl:text>bp][b]{</xsl:text>
+        <xsl:value-of select="tr:pptx-round($iw)"/>
+        <xsl:text>bp}</xsl:text>
+      </xsl:when>
+      <xsl:when test="@css:vertical-align eq 'middle'">
+        <xsl:text>\parbox[t][</xsl:text>
+        <xsl:value-of select="tr:pptx-round($ih)"/>
+        <xsl:text>bp][c]{</xsl:text>
+        <xsl:value-of select="tr:pptx-round($iw)"/>
+        <xsl:text>bp}</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>\parbox[t]{</xsl:text>
+        <xsl:value-of select="tr:pptx-round($iw)"/>
+        <xsl:text>bp}</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+    <xsl:text>{\topskip=0pt\parskip=0pt</xsl:text>
+    <xsl:apply-templates mode="#current"/>
+    <!-- a trailing zero glue ends the box: the last line's depth then counts
+         into the box height instead of hanging below its bottom edge -->
+    <xsl:text>\vskip0bp}\end{textblock}&#xa;</xsl:text>
+  </template>
+
+  <!-- ============================ paragraphs inside a text box ==================== -->
+
+  <template context="dbk:para[parent::dbk:sidebar[@role eq 'pptx-textbox']]">
+    <xsl:variable name="sz" select="tr:pptx-num(@css:font-size)" as="xs:double"/>
+    <!-- PowerPoint line spacing model (measured against the OnlyOffice render):
+         100 % = pitch 1.2 x font size, first baseline 0.96 x size below the
+         para top, last line descent 0.24 x size - independent of the font -->
+    <xsl:variable name="lh-att" select="@css:line-height" as="xs:string?"/>
+    <xsl:variable name="pct" as="xs:double?"
+                  select="if ($lh-att castable as xs:double) then xs:double($lh-att) else ()"/>
+    <xsl:variable name="L" as="xs:double"
+                  select="if (exists($pct)) then $pct * 1.2 * $sz else tr:pptx-num($lh-att)"/>
+    <xsl:variable name="A" as="xs:double" select="0.8 * $L"/>
+    <xsl:variable name="D" as="xs:double" select="0.2 * $L"/>
+    <!-- inter-paragraph glue: space after the previous para + space before this one -->
+    <xsl:if test="preceding-sibling::dbk:para[1]">
+      <xsl:variable name="aft" select="tr:pptx-num(preceding-sibling::dbk:para[1]/@css:margin-bottom)" as="xs:double"/>
+      <xsl:variable name="bef" select="tr:pptx-num(@css:margin-top)" as="xs:double"/>
+      <xsl:choose>
+        <xsl:when test="$aft + $bef ne 0">
+          <xsl:text>\vskip</xsl:text>
+          <xsl:value-of select="tr:pptx-round($aft + $bef)"/>
+          <xsl:text>bp\prevdepth=-1000pt</xsl:text>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:text>\prevdepth=-1000pt</xsl:text>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:if>
+    <xsl:text>{\pptxfont</xsl:text>
+    <xsl:value-of select="tr:pptx-font-letter(@css:font-family)"/>
+    <xsl:if test="@css:font-weight eq 'bold'">
+      <xsl:text>\bfseries</xsl:text>
+    </xsl:if>
+    <xsl:text>\fontsize{</xsl:text>
+    <xsl:value-of select="tr:pptx-round($sz)"/>
+    <xsl:text>bp}{</xsl:text>
+    <xsl:value-of select="tr:pptx-round($L)"/>
+    <xsl:text>bp}\selectfont</xsl:text>
+    <xsl:if test="exists(@css:color)">
+      <xsl:text>\color{</xsl:text>
+      <xsl:value-of select="tr:pptx-color-name(@css:color)"/>
+      <xsl:text>}</xsl:text>
+    </xsl:if>
+    <xsl:text>\baselineskip=</xsl:text>
+    <xsl:value-of select="tr:pptx-round($L)"/>
+    <xsl:text>bp\lineskiplimit=-16000bp\lineskip=0bp\hyphenpenalty=10000\exhyphenpenalty=10000</xsl:text>
+    <!-- leftskip (marL) and first-line outdent (indent) come first; the
+         alignment macros afterwards may override \rightskip/\parfillskip -->
+    <xsl:variable name="marL" select="tr:pptx-num(@css:margin-left)" as="xs:double"/>
+    <xsl:variable name="indent" select="tr:pptx-num(@css:text-indent)" as="xs:double"/>
+    <xsl:choose>
+      <xsl:when test="@css:text-align eq 'center'">
+        <xsl:text>\leftskip=0pt plus 1fil\rightskip=0pt plus 1fil\parfillskip=0pt</xsl:text>
+      </xsl:when>
+      <xsl:when test="@css:text-align eq 'right'">
+        <xsl:text>\leftskip=0pt plus 1fil\rightskip=0pt\parfillskip=0pt</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>\leftskip=</xsl:text>
+        <xsl:value-of select="tr:pptx-round($marL)"/>
+        <xsl:text>bp\parindent=</xsl:text>
+        <xsl:value-of select="tr:pptx-round($indent)"/>
+        <xsl:text>bp\rightskip=0pt plus 1fil\parfillskip=0pt plus 1fil</xsl:text>
+        <xsl:if test="@css:text-align eq 'justify'">
+          <xsl:text>\rightskip=0pt</xsl:text>
+        </xsl:if>
+      </xsl:otherwise>
+    </xsl:choose>
+    <!-- first line height strut: puts the baseline exactly ascent below the
+         para top, like PowerPoint/FreeType -->
+    <xsl:text>\rule{0bp}{</xsl:text>
+    <xsl:value-of select="tr:pptx-round($A)"/>
+    <xsl:text>bp}</xsl:text>
+    <!-- bullet glyph, right-aligned into the outdent zone -->
+    <xsl:if test="exists(@mark)">
+      <xsl:variable name="msz" select="if (@css:marker-size castable as xs:double)
+                                       then xs:double(@css:marker-size) * $sz else $sz" as="xs:double"/>
+      <xsl:text>\makebox[</xsl:text>
+      <xsl:value-of select="tr:pptx-round(-$indent)"/>
+      <xsl:text>bp][r]{</xsl:text>
+      <xsl:if test="exists(@css:marker-color)">
+        <xsl:text>\color{</xsl:text>
+        <xsl:value-of select="tr:pptx-color-name(@css:marker-color)"/>
+        <xsl:text>}</xsl:text>
+      </xsl:if>
+      <xsl:text>\fontsize{</xsl:text>
+      <xsl:value-of select="tr:pptx-round($msz)"/>
+      <xsl:text>bp}{</xsl:text>
+      <xsl:value-of select="tr:pptx-round($msz)"/>
+      <xsl:text>bp}\selectfont </xsl:text>
+      <xsl:value-of select="@mark"/>
+      <xsl:text>}\hspace{</xsl:text>
+      <xsl:value-of select="tr:pptx-round(0.1317 * $sz)"/>
+      <xsl:text>bp}</xsl:text>
+    </xsl:if>
+    <xsl:apply-templates mode="#current"/>
+    <!-- last line depth strut (nobreak keeps it on the last line) -->
+    <xsl:text>\nobreak\rule[-</xsl:text>
+    <xsl:value-of select="tr:pptx-round($D)"/>
+    <xsl:text>bp]{0bp}{</xsl:text>
+    <xsl:value-of select="tr:pptx-round($D)"/>
+    <xsl:text>bp}\par}</xsl:text>
+  </template>
+
+  <!-- phrase font/size switches inside canvas paras -->
+  <template context="dbk:phrase[ancestor::dbk:sidebar[@role eq 'pptx-textbox']][@css:font-family or @css:font-size]">
+    <xsl:variable name="para" select="ancestor::dbk:para[1]"/>
+    <xsl:variable name="fam" select="(@css:font-family, $para/@css:font-family)[1]"/>
+    <xsl:variable name="sz" select="tr:pptx-num((@css:font-size, $para/@css:font-size)[1])"/>
+    <xsl:variable name="m" select="tr:pptx-metrics($fam)" as="element(tr:fm)"/>
+    <xsl:variable name="pct" as="xs:double?"
+                  select="if ($para/@css:line-height castable as xs:double) then xs:double($para/@css:line-height) else ()"/>
+    <xsl:text>{\pptxfont</xsl:text>
+    <xsl:value-of select="tr:pptx-font-letter($fam)"/>
+    <xsl:if test="@css:font-weight eq 'bold'">
+      <xsl:text>\bfseries</xsl:text>
+    </xsl:if>
+    <xsl:text>\fontsize{</xsl:text>
+    <xsl:value-of select="tr:pptx-round($sz)"/>
+    <xsl:text>bp}{</xsl:text>
+    <xsl:value-of select="tr:pptx-round((if (exists($pct)) then $pct else 1) * ($m/@asc + $m/@desc + $m/@gap) * $sz)"/>
+    <xsl:text>bp}\selectfont </xsl:text>
+    <xsl:apply-templates mode="#current"/>
+    <xsl:text>}</xsl:text>
+  </template>
+
+  <!-- phrase color inside canvas paras: declaration instead of \textcolor so it
+       survives nested font groups -->
+  <template context="dbk:phrase[ancestor::dbk:sidebar[@role eq 'pptx-textbox']][@css:color][not(@css:font-family or @css:font-size)]">
+    <xsl:text>{\color{</xsl:text>
+    <xsl:value-of select="tr:pptx-color-name(@css:color)"/>
+    <xsl:text>}</xsl:text>
+    <xsl:apply-templates mode="#current"/>
+    <xsl:text>}</xsl:text>
+  </template>
+
+  <!-- ============================ filled rectangles ==================== -->
+
+  <template context="dbk:para[@role eq 'pptx-rect']">
+    <xsl:text>\begin{textblock}{</xsl:text>
+    <xsl:value-of select="tr:pptx-round(tr:pptx-num(@css:width))"/>
+    <xsl:text>}(</xsl:text>
+    <xsl:value-of select="tr:pptx-round(tr:pptx-num(@css:left))"/>
+    <xsl:text>,</xsl:text>
+    <xsl:value-of select="tr:pptx-round(tr:pptx-num(@css:top))"/>
+    <xsl:text>){\color{</xsl:text>
+    <xsl:value-of select="tr:pptx-color-name(@css:background-color)"/>
+    <xsl:text>}\rule{</xsl:text>
+    <xsl:value-of select="tr:pptx-round(tr:pptx-num(@css:width))"/>
+    <xsl:text>bp}{</xsl:text>
+    <xsl:value-of select="tr:pptx-round(tr:pptx-num(@css:height))"/>
+    <xsl:text>bp}}\end{textblock}&#xa;</xsl:text>
+  </template>
+
+  <!-- pptx pictures and vector art need no float machinery; the textblock
+       places them -->
+  <template context="dbk:figure[@role = ('pptx-picture', 'pptx-art')]">
+    <xsl:apply-templates mode="#current"/>
+  </template>
+
+  <!-- ============================ pictures ==================== -->
+
+  <template context="dbk:imagedata[@css:position-left][@css:position-top][ancestor::dbk:figure[@role eq 'pptx-picture']]">
+    <xsl:variable name="w" select="tr:pptx-num(@css:width)" as="xs:double"/>
+    <xsl:variable name="h" select="tr:pptx-num(@css:height)" as="xs:double"/>
+    <xsl:variable name="x" select="tr:pptx-num(@css:position-left)" as="xs:double"/>
+    <xsl:variable name="y" select="tr:pptx-num(@css:position-top)" as="xs:double"/>
+    <!-- srcRect crop, per-mille of the natural size -->
+    <xsl:variable name="cl" select="xs:double((@css:crop-l, 0)[1])" as="xs:double"/>
+    <xsl:variable name="ct" select="xs:double((@css:crop-t, 0)[1])" as="xs:double"/>
+    <xsl:variable name="cr" select="xs:double((@css:crop-r, 0)[1])" as="xs:double"/>
+    <xsl:variable name="cb" select="xs:double((@css:crop-b, 0)[1])" as="xs:double"/>
+    <xsl:text>\begin{textblock}{</xsl:text>
+    <xsl:value-of select="tr:pptx-round($w)"/>
+    <xsl:text>}(</xsl:text>
+    <xsl:value-of select="tr:pptx-round($x)"/>
+    <xsl:text>,</xsl:text>
+    <xsl:value-of select="tr:pptx-round($y)"/>
+    <xsl:text>)\includegraphics[width=</xsl:text>
+    <xsl:value-of select="tr:pptx-round($w)"/>
+    <xsl:text>bp,height=</xsl:text>
+    <xsl:value-of select="tr:pptx-round($h)"/>
+    <xsl:text>bp</xsl:text>
+    <xsl:if test="$cl + $ct + $cr + $cb gt 0">
+      <xsl:text>,trim=</xsl:text>
+      <xsl:value-of select="concat($cl * 10, ' ', $cb * 10, ' ', $cr * 10, ' ', $ct * 10)"/>
+      <xsl:text>,clip</xsl:text>
+    </xsl:if>
+    <xsl:text>]{</xsl:text>
+    <xsl:value-of select="replace(@fileref, '([%#])', '\\$1')"/>
+    <xsl:text>}\end{textblock}&#xa;</xsl:text>
+  </template>
+
+  <!-- ============================ tables ==================== -->
+
+  <template context="dbk:table[@role eq 'pptx-table']">
+    <xsl:variable name="x" select="tr:pptx-num(@css:left)" as="xs:double"/>
+    <xsl:variable name="y" select="tr:pptx-num(@css:top)" as="xs:double"/>
+    <xsl:variable name="widths" select="(for $c in dbk:tgroup/dbk:colspec return tr:pptx-num($c/@css:column-width), 100)" as="xs:double+"/>
+    <xsl:variable name="total" select="sum($widths)" as="xs:double"/>
+    <xsl:variable name="cells" select="(.//dbk:entry, .)[1]" as="element()+"/>
+    <xsl:variable name="sz" select="tr:pptx-num(($cells[exists(@css:font-size)][1]/@css:font-size, '12pt')[1])" as="xs:double"/>
+    <xsl:variable name="fam" select="($cells[exists(@css:font-family)][1]/@css:font-family, 'Arial')[1]" as="xs:string"/>
+    <xsl:text>\begin{textblock}{</xsl:text>
+    <xsl:value-of select="tr:pptx-round($total)"/>
+    <xsl:text>}(</xsl:text>
+    <xsl:value-of select="tr:pptx-round($x)"/>
+    <xsl:text>,</xsl:text>
+    <xsl:value-of select="tr:pptx-round($y)"/>
+    <xsl:text>){\pptxfont</xsl:text>
+    <xsl:value-of select="tr:pptx-font-letter($fam)"/>
+    <xsl:text>\fontsize{</xsl:text>
+    <xsl:value-of select="tr:pptx-round($sz)"/>
+    <xsl:text>bp}{</xsl:text>
+    <xsl:value-of select="tr:pptx-round($sz * 1.2)"/>
+    <xsl:text>bp}\selectfont\topskip=0bp\tabcolsep=0bp\arrayrulewidth=0.5bp\begin{tabular}{</xsl:text>
+    <xsl:for-each select="$widths">
+      <xsl:text>p{</xsl:text>
+      <xsl:value-of select="tr:pptx-round(.)"/>
+      <xsl:text>bp}</xsl:text>
+    </xsl:for-each>
+    <xsl:text>}&#xa;</xsl:text>
+    <!-- exactly one cell per column: rows may carry fewer entries -->
+    <xsl:for-each select="dbk:tgroup/dbk:tbody/dbk:row">
+      <xsl:if test="position() gt 1">
+        <xsl:text>\tabularnewline&#xa;</xsl:text>
+      </xsl:if>
+      <xsl:variable name="row" select="." as="element(dbk:row)"/>
+      <xsl:for-each select="1 to count($widths)">
+        <xsl:if test="position() gt 1">
+          <xsl:text>&amp;</xsl:text>
+        </xsl:if>
+        <xsl:variable name="cell" select="$row/dbk:entry[position() eq current()]" as="element(dbk:entry)?"/>
+        <xsl:variable name="h" select="max((tr:pptx-num($row/@css:row-height), $sz * 1.2))" as="xs:double"/>
+        <xsl:variable name="pl" select="if (exists($cell)) then tr:pptx-num($cell/@css:padding-left) else 0"/>
+        <xsl:variable name="pt" select="if (exists($cell)) then tr:pptx-num($cell/@css:padding-top) else 0"/>
+        <xsl:text>{\vtop to </xsl:text>
+        <xsl:value-of select="tr:pptx-round($h)"/>
+        <xsl:text>bp{\vskip</xsl:text>
+        <xsl:value-of select="tr:pptx-round($pt)"/>
+        <xsl:text>bp\hbox{\hskip </xsl:text>
+        <xsl:value-of select="tr:pptx-round($pl)"/>
+        <xsl:text>bp</xsl:text>
+        <xsl:if test="exists($cell/@css:background-color)">
+          <xsl:text>\color{</xsl:text>
+          <xsl:value-of select="tr:pptx-color-name($cell/@css:background-color)"/>
+          <xsl:text>}</xsl:text>
+        </xsl:if>
+        <xsl:text>\strut </xsl:text>
+        <xsl:if test="exists($cell)">
+          <xsl:value-of select="replace(normalize-space(string-join($cell//dbk:para, ' ')), '([%&amp;#{}_\^~])', '\\$1')"/>
+        </xsl:if>
+        <xsl:text>}\vfil}}</xsl:text>
+      </xsl:for-each>
+    </xsl:for-each>
+    <xsl:text>\tabularnewline\end{tabular}}\end{textblock}&#xa;</xsl:text>
+  </template>
+
+  <!-- ============================ canvas vector art ==================== -->
+
+  <template context="svg:svg[ancestor::dbk:figure[@role eq 'pptx-art']]">
+    <!-- decorative pptx shapes converted to SVG: written next to the .tex (the
+         d2t wrapper converts each -svg-N.svg to PDF with rsvg-convert) and
+         placed at the shape's absolute slide coordinates -->
+    <xsl:variable name="svg-index" select="count($svg-images[. &lt;&lt; current()]) + 1" as="xs:integer"/>
+    <!-- underscores do not survive the charmap escaping of hrefs -->
+    <xsl:variable name="file-stem" select="translate($basename, '_', '-')" as="xs:string"/>
+    <xsl:variable name="svg-filename" select="concat($file-stem, '-svg-', $svg-index, '.svg')" as="xs:string"/>
+    <xsl:variable name="img" select="ancestor::dbk:imagedata[1]" as="element(dbk:imagedata)"/>
+    <xsl:variable name="w" select="tr:pptx-num($img/@css:width)" as="xs:double"/>
+    <xsl:variable name="h" select="tr:pptx-num($img/@css:height)" as="xs:double"/>
+    <xsl:if test="$w gt 0 and $h gt 0">
+      <xsl:text>\begin{textblock}{</xsl:text>
+      <xsl:value-of select="tr:pptx-round($w)"/>
+      <xsl:text>}(</xsl:text>
+      <xsl:value-of select="tr:pptx-round(tr:pptx-num($img/@css:position-left))"/>
+      <xsl:text>,</xsl:text>
+      <xsl:value-of select="tr:pptx-round(tr:pptx-num($img/@css:position-top))"/>
+      <xsl:text>)\includegraphics[width=</xsl:text>
+      <xsl:value-of select="tr:pptx-round($w)"/>
+      <xsl:text>bp,height=</xsl:text>
+      <xsl:value-of select="tr:pptx-round($h)"/>
+      <xsl:text>bp]{</xsl:text>
+      <xsl:value-of select="concat($file-stem, '-svg-', $svg-index, '.pdf')"/>
+      <xsl:text>}\end{textblock}&#xa;</xsl:text>
+    </xsl:if>
+    <!-- written directly (the c:data file machinery TeX-escapes hrefs) -->
+    <xsl:result-document href="{concat($path, '/', $file-stem, '-svg-', $svg-index, '.svg')}"
+                         method="xml" encoding="utf-8">
+      <xsl:copy-of select="."/>
+    </xsl:result-document>
+  </template>
+
+  <!-- ============================ speaker notes ==================== -->
+
+  <template context="dbk:note[@role eq 'speaker-notes']">
+    <xsl:text>\note{</xsl:text>
+    <xsl:value-of select="replace(string-join(for $p in dbk:para return normalize-space($p), ' '), '([%&amp;#{}])', '\\$1')"/>
+    <xsl:text>}</xsl:text>
   </template>
 
 </set>
