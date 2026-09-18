@@ -253,15 +253,17 @@
       </xsl:when>
       <xsl:when test="$clr/self::a:schemeClr and exists($theme)">
         <xsl:variable name="val" select="string($clr/@val)"/>
+        <!-- anchor on the theme's own scheme: extraClrSchemeLst carries
+             additional a:clrScheme elements whose slots must not win -->
         <xsl:variable name="slot" as="element()?"
-          select="$theme//a:clrScheme/(a:dk1 | a:lt1 | a:dk2 | a:lt2 | a:accent1 | a:accent2 | a:accent3
+          select="($theme//a:themeElements/a:clrScheme/(a:dk1 | a:lt1 | a:dk2 | a:lt2 | a:accent1 | a:accent2 | a:accent3
                                         | a:accent4 | a:accent5 | a:accent6 | a:hlink | a:folHlink)
                   [local-name() =
                      (if ($val eq 'dk1' or $val eq 'tx1') then 'dk1'
                       else if ($val eq 'lt1' or $val eq 'bg1') then 'lt1'
                       else if ($val eq 'dk2' or $val eq 'tx2') then 'dk2'
                       else if ($val eq 'lt2' or $val eq 'bg2') then 'lt2'
-                      else $val)][1]"/>
+                      else $val)])[1]"/>
         <xsl:variable name="slot-clr" select="$slot/(a:srgbClr | a:sysClr)[1]"/>
         <xsl:sequence select="if (exists($slot-clr/self::a:srgbClr))
                               then pptx2hub:hex-to-rgb($slot-clr/@val)
@@ -1211,6 +1213,201 @@
   <xsl:template match="p:graphicFrame" mode="pptx2hub:canvas-shape">
     <xsl:param name="theme" as="document-node()?" tunnel="yes"/>
     <xsl:param name="groups" as="element(p:grpSpPr)*" select="()" tunnel="yes"/>
+    <xsl:variable name="box" select="pptx2hub:abs-box((p:xfrm | a:xfrm)[1], $groups)"/>
+    <xsl:for-each select=".//a:tbl">
+      <xsl:variable name="rows" select="a:tr"/>
+      <!-- a CALS dbk:table/tgroup would be rewritten (and its colspecs
+           consumed) by the calstable normalization; pptx tables therefore
+           travel as a plain sidebar/para/phrase structure -->
+      <dbk:sidebar role="pptx-table">
+        <xsl:attribute name="css:left" select="pptx2hub:emu-to-pt($box[1])"/>
+        <xsl:attribute name="css:top" select="pptx2hub:emu-to-pt($box[2])"/>
+        <xsl:attribute name="css:cols"
+                       select="string-join(for $c in a:tblGrid/a:gridCol
+                                           return pptx2hub:emu-to-pt(xs:double($c/@w)), ' ')"/>
+        <xsl:for-each select="$rows">
+          <dbk:para role="pptx-row">
+            <xsl:attribute name="css:row-height" select="pptx2hub:emu-to-pt(xs:double((@h, 0)[1]))"/>
+            <xsl:for-each select="a:tc">
+              <dbk:phrase role="pptx-cell">
+                <xsl:variable name="fill" select="a:tcPr/a:solidFill"/>
+                <xsl:if test="exists($fill)">
+                  <xsl:attribute name="css:background-color" select="pptx2hub:color-hex($fill, $theme)"/>
+                </xsl:if>
+                <xsl:attribute name="css:padding-left" select="pptx2hub:emu-to-pt(xs:double((a:tcPr/@marL, 91440)[1]))"/>
+                <xsl:attribute name="css:padding-right" select="pptx2hub:emu-to-pt(xs:double((a:tcPr/@marR, 91440)[1]))"/>
+                <xsl:attribute name="css:padding-top" select="pptx2hub:emu-to-pt(xs:double((a:tcPr/@marT, 45720)[1]))"/>
+                <xsl:attribute name="css:padding-bottom" select="pptx2hub:emu-to-pt(xs:double((a:tcPr/@marB, 45720)[1]))"/>
+                <xsl:variable name="algn" select="(.//a:txBody/a:p/a:pPr/@algn)[1]"/>
+                <xsl:if test="exists($algn)">
+                  <xsl:attribute name="css:text-align"
+                                 select="if ($algn eq 'r') then 'right'
+                                         else if ($algn eq 'ctr') then 'center'
+                                         else 'left'"/>
+                </xsl:if>
+                <xsl:variable name="rPr" select="(.//a:r/a:rPr)[1]"/>
+                <xsl:if test="exists($rPr)">
+                  <xsl:if test="exists($rPr/@sz)">
+                    <xsl:attribute name="css:font-size" select="pptx2hub:hpt-to-pt(xs:double($rPr/@sz))"/>
+                  </xsl:if>
+                  <xsl:if test="$rPr/@b eq '1'">
+                    <xsl:attribute name="css:font-weight" select="'bold'"/>
+                  </xsl:if>
+                  <xsl:if test="exists($rPr/a:solidFill)">
+                    <xsl:attribute name="css:color" select="pptx2hub:color-hex($rPr/a:solidFill, $theme)"/>
+                  </xsl:if>
+                </xsl:if>
+                <xsl:value-of select="normalize-space(string-join(.//a:t, ' '))"/>
+              </dbk:phrase>
+            </xsl:for-each>
+          </dbk:para>
+        </xsl:for-each>
+      </dbk:sidebar>
+    </xsl:for-each>
+  </xsl:template>
+
+  <!-- ====================== runs ====================== -->
+
+  <xsl:template match="a:pPr" mode="pptx2hub:run"/>
+
+  <xsl:template match="a:fld[a:t = '&#8249;#&#8250;']" mode="pptx2hub:run" priority="2">
+    <xsl:param name="slide-nr" as="xs:integer" tunnel="yes" select="1"/>
+    <xsl:value-of select="string($slide-nr)"/>
+  </xsl:template>
+
+  <xsl:template match="a:r | a:fld" mode="pptx2hub:run">
+    <xsl:param name="rels" as="document-node()?" tunnel="yes"/>
+    <xsl:param name="chain" as="element()*" tunnel="yes"/>
+    <xsl:param name="theme" as="document-node()?" tunnel="yes"/>
+    <xsl:param name="font-scale" as="xs:double" tunnel="yes"/>
+    <xsl:param name="lvl" as="xs:integer" tunnel="yes" select="0"/>
+    <xsl:param name="para-sz" as="xs:integer" tunnel="yes"/>
+    <xsl:param name="para-font" as="xs:string" tunnel="yes"/>
+    <xsl:param name="para-color" as="xs:string?" tunnel="yes"/>
+    <xsl:param name="para-bold" as="xs:boolean" tunnel="yes"/>
+    <xsl:param name="para-spc" as="xs:integer" tunnel="yes"/>
+
+    <xsl:variable name="rPr" select="a:rPr"/>
+    <xsl:variable name="sz" select="pptx2hub:run-size($rPr, $chain, $lvl, $font-scale)"/>
+    <xsl:variable name="font" select="pptx2hub:run-font($rPr, $chain, $lvl, $theme)"/>
+    <xsl:variable name="color" select="pptx2hub:run-color($rPr, $chain, $lvl, $theme)"/>
+    <xsl:variable name="bold" select="xs:boolean(($rPr/@b, '0')[1] eq '1')"/>
+    <xsl:variable name="spc" select="xs:integer(($rPr/@spc, 0)[1])"/>
+    <xsl:variable name="css-atts" as="attribute()*">
+      <xsl:if test="$sz ne $para-sz">
+        <xsl:attribute name="css:font-size" select="pptx2hub:hpt-to-pt($sz)"/>
+      </xsl:if>
+      <xsl:if test="$font ne $para-font">
+        <xsl:attribute name="css:font-family" select="$font"/>
+      </xsl:if>
+      <xsl:if test="exists($color) and $color ne $para-color">
+        <xsl:attribute name="css:color" select="$color"/>
+      </xsl:if>
+      <xsl:if test="$bold ne $para-bold">
+        <xsl:attribute name="css:font-weight" select="if ($bold) then 'bold' else 'normal'"/>
+      </xsl:if>
+      <xsl:if test="xs:boolean(($rPr/@i, for $d in pptx2hub:defRPrs($chain, $lvl) return $d/@i, '0')[1] eq '1')">
+        <xsl:attribute name="css:font-style" select="'italic'"/>
+      </xsl:if>
+      <xsl:variable name="deco" as="xs:string*"
+        select="(if ($rPr/@u[. ne 'none']) then 'underline' else (),
+                 if ($rPr/@strike[starts-with(., 's')]) then 'line-through' else ())"/>
+      <xsl:if test="exists($deco)">
+        <xsl:attribute name="css:text-decoration-line" select="string-join($deco, ' ')"/>
+      </xsl:if>
+      <xsl:if test="$spc ne $para-spc">
+        <xsl:attribute name="css:letter-spacing" select="pptx2hub:hpt-to-pt($spc)"/>
+      </xsl:if>
+    </xsl:variable>
+
+    <xsl:variable name="content" as="node()*">
+      <xsl:choose>
+        <xsl:when test="exists($css-atts)">
+          <dbk:phrase>
+            <xsl:sequence select="$css-atts"/>
+            <xsl:value-of select="a:t"/>
+          </dbk:phrase>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="a:t"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:variable>
+    <xsl:variable name="hlink" as="element(rel:Relationship)?"
+      select="$rels//rel:Relationship[@Id = a:rPr/a:hlinkClick/@r:id]"/>
+    <xsl:choose>
+      <xsl:when test="exists($hlink)">
+        <dbk:link xlink:href="{$hlink/@Target}">
+          <xsl:sequence select="$content"/>
+        </dbk:link>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:sequence select="$content"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="a:br" mode="pptx2hub:run">
+    <dbk:br/>
+  </xsl:template>
+
+  <!-- ====================== pictures ====================== -->
+
+  <xsl:template match="p:pic" mode="pptx2hub:canvas-shape">
+    <xsl:param name="rels" as="document-node()?" tunnel="yes"/>
+    <xsl:param name="layout-rels" as="document-node()?" tunnel="yes" select="()"/>
+    <xsl:param name="master-rels" as="document-node()?" tunnel="yes" select="()"/>
+    <xsl:param name="groups" as="element(p:grpSpPr)*" select="()" tunnel="yes"/>
+    <xsl:variable name="blip" select=".//a:blip[exists(@r:embed | @r:link)][1]"/>
+    <!-- template shapes copied between parts keep their rId: prefer the
+         relationship that actually is an image, in any of the parts' rels -->
+    <xsl:variable name="rel" as="element(rel:Relationship)?"
+      select="($rels//rel:Relationship[@Id = ($blip/(@r:embed | @r:link))[1]][ends-with(@Type, '/image')],
+               $layout-rels//rel:Relationship[@Id = ($blip/(@r:embed | @r:link))[1]][ends-with(@Type, '/image')],
+               $master-rels//rel:Relationship[@Id = ($blip/(@r:embed | @r:link))[1]][ends-with(@Type, '/image')])[1]"/>
+    <xsl:choose>
+      <xsl:when test="exists($rel)">
+        <xsl:variable name="box" select="pptx2hub:abs-box(p:spPr/a:xfrm, $groups)"/>
+        <dbk:figure role="pptx-picture">
+          <dbk:mediaobject>
+            <dbk:imageobject>
+              <dbk:imagedata>
+                <!-- the target is relative to the directory of the part whose
+                     rels document supplied the relationship -->
+                <xsl:variable name="rel-base" as="xs:string"
+                  select="if (root($rel) is $rels) then 'ppt/slides/'
+                          else if (exists($layout-rels) and root($rel) is $layout-rels) then 'ppt/slideLayouts/'
+                          else 'ppt/slideMasters/'"/>
+                <xsl:attribute name="fileref" select="
+                  if ($rel/@TargetMode eq 'External')
+                  then string($rel/@Target)
+                  else concat('container:',
+                              pptx2hub:resolve-target(string($rel/@Target), $rel-base))"/>
+                <xsl:attribute name="css:position-left" select="pptx2hub:emu-to-pt($box[1])"/>
+                <xsl:attribute name="css:position-top" select="pptx2hub:emu-to-pt($box[2])"/>
+                <xsl:attribute name="css:width" select="pptx2hub:emu-to-pt($box[3])"/>
+                <xsl:attribute name="css:height" select="pptx2hub:emu-to-pt($box[4])"/>
+                <xsl:variable name="src" select=".//a:srcRect"/>
+                <xsl:for-each select="$src/@l, $src/@t, $src/@r, $src/@b">
+                  <xsl:attribute name="css:crop-{(substring(local-name(),1,1))}" select="string(xs:double(.) div 1000)"/>
+                </xsl:for-each>
+              </dbk:imagedata>
+            </dbk:imageobject>
+          </dbk:mediaobject>
+        </dbk:figure>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:message select="concat('[pptx2hub] warning: picture without relationship: ',
+                                    string((p:nvPicPr/p:cNvPr/@name, 'unnamed')[1]))"/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- ====================== tables ====================== -->
+
+  <xsl:template match="p:graphicFrame" mode="pptx2hub:canvas-shape">
+    <xsl:param name="theme" as="document-node()?" tunnel="yes"/>
+    <xsl:param name="groups" as="element(p:grpSpPr)*" select="()" tunnel="yes"/>
     <xsl:variable name="box" select="pptx2hub:abs-box(p:xfrm, $groups)"/>
     <xsl:for-each select=".//a:tbl">
       <xsl:variable name="rows" select="a:tr"/>
@@ -1221,6 +1418,9 @@
           <xsl:attribute name="cols" select="max(for $r in $rows return count($r/a:tc))"/>
           <xsl:for-each select="a:tblGrid/a:gridCol">
             <dbk:colspec colname="c{position()}">
+              <!-- colwidth is the CALS attribute; the calstable
+                   normalization drops colspecs that lack it -->
+              <xsl:attribute name="colwidth" select="pptx2hub:emu-to-pt(xs:double(@w))"/>
               <xsl:attribute name="css:column-width" select="pptx2hub:emu-to-pt(xs:double(@w))"/>
             </dbk:colspec>
           </xsl:for-each>
@@ -1264,7 +1464,7 @@
         <xsl:attribute name="css:border-color" select="pptx2hub:color-hex(a:solidFill, $theme)"/>
         <xsl:attribute name="css:border-width" select="pptx2hub:emu-to-pt(xs:double(@w))"/>
       </xsl:for-each>
-      <xsl:variable name="rPr" select=".//a:r/a:rPr[1]"/>
+      <xsl:variable name="rPr" select="(.//a:r/a:rPr)[1]"/>
       <xsl:if test="exists($rPr)">
         <xsl:if test="exists($rPr/@sz)">
           <xsl:attribute name="css:font-size" select="pptx2hub:hpt-to-pt(xs:double($rPr/@sz))"/>

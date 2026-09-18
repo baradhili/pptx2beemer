@@ -41,6 +41,9 @@
                 select="(
                          //@css:background-color,
                          //@css:marker-color,
+                         //@css:border-color,
+                         (: pptx canvas text colors are used explicitly, even near-black ones :)
+                         //@css:color[ancestor::dbk:sidebar[@role eq 'pptx-textbox']],
                          //@css:color[not(every $i in  tr:hex-rgb-color-to-ints(.) satisfies $i &lt; 35
                                           or parent::*[(@role, @name) = ('ZFinlineequation', 'ZFequation')]
                                           or ancestor::dbk:para/dbk:phrase[@role = ('ZFinlineequation', 'ZFequation', 'Hyperlink')]
@@ -2971,14 +2974,14 @@
 
   <!-- ============================ tables ==================== -->
 
-  <template context="dbk:table[@role eq 'pptx-table']">
+  <template context="dbk:sidebar[@role eq 'pptx-table']">
     <xsl:variable name="x" select="tr:pptx-num(@css:left)" as="xs:double"/>
     <xsl:variable name="y" select="tr:pptx-num(@css:top)" as="xs:double"/>
-    <xsl:variable name="widths" select="(for $c in dbk:tgroup/dbk:colspec return tr:pptx-num($c/@css:column-width), 100)" as="xs:double+"/>
+    <xsl:variable name="widths" as="xs:double+"
+                  select="(for $w in tokenize(@css:cols, ' ') return tr:pptx-num($w), 100)"/>
     <xsl:variable name="total" select="sum($widths)" as="xs:double"/>
-    <xsl:variable name="cells" select="(.//dbk:entry, .)[1]" as="element()+"/>
+    <xsl:variable name="cells" select=".//dbk:phrase[@role eq 'pptx-cell']" as="element()*"/>
     <xsl:variable name="sz" select="tr:pptx-num(($cells[exists(@css:font-size)][1]/@css:font-size, '12pt')[1])" as="xs:double"/>
-    <xsl:variable name="fam" select="($cells[exists(@css:font-family)][1]/@css:font-family, 'Arial')[1]" as="xs:string"/>
     <xsl:text>\begin{textblock}{</xsl:text>
     <xsl:value-of select="tr:pptx-round($total)"/>
     <xsl:text>}(</xsl:text>
@@ -2986,47 +2989,58 @@
     <xsl:text>,</xsl:text>
     <xsl:value-of select="tr:pptx-round($y)"/>
     <xsl:text>){\pptxfont</xsl:text>
-    <xsl:value-of select="tr:pptx-font-letter($fam)"/>
+    <xsl:value-of select="tr:pptx-font-letter('Arial')"/>
     <xsl:text>\fontsize{</xsl:text>
     <xsl:value-of select="tr:pptx-round($sz)"/>
     <xsl:text>bp}{</xsl:text>
     <xsl:value-of select="tr:pptx-round($sz * 1.2)"/>
-    <xsl:text>bp}\selectfont\topskip=0bp\tabcolsep=0bp\arrayrulewidth=0.5bp\begin{tabular}{</xsl:text>
+    <xsl:text>bp}\selectfont\topskip=0bp\parskip=0bp\tabcolsep=0bp\arrayrulewidth=0.5bp\begin{tabular}{</xsl:text>
     <xsl:for-each select="$widths">
-      <xsl:text>p{</xsl:text>
+      <xsl:text>&gt;{\raggedright\arraybackslash}p{</xsl:text>
       <xsl:value-of select="tr:pptx-round(.)"/>
       <xsl:text>bp}</xsl:text>
     </xsl:for-each>
     <xsl:text>}&#xa;</xsl:text>
-    <!-- exactly one cell per column: rows may carry fewer entries -->
-    <xsl:for-each select="dbk:tgroup/dbk:tbody/dbk:row">
+    <xsl:for-each select="dbk:para[@role eq 'pptx-row']">
       <xsl:if test="position() gt 1">
         <xsl:text>\tabularnewline&#xa;</xsl:text>
       </xsl:if>
-      <xsl:variable name="row" select="." as="element(dbk:row)"/>
+      <xsl:variable name="row" select="." as="element()"/>
       <xsl:for-each select="1 to count($widths)">
         <xsl:if test="position() gt 1">
           <xsl:text>&amp;</xsl:text>
         </xsl:if>
-        <xsl:variable name="cell" select="$row/dbk:entry[position() eq current()]" as="element(dbk:entry)?"/>
-        <xsl:variable name="h" select="max((tr:pptx-num($row/@css:row-height), $sz * 1.2))" as="xs:double"/>
-        <xsl:variable name="pl" select="if (exists($cell)) then tr:pptx-num($cell/@css:padding-left) else 0"/>
-        <xsl:variable name="pt" select="if (exists($cell)) then tr:pptx-num($cell/@css:padding-top) else 0"/>
-        <xsl:text>{\vtop to </xsl:text>
-        <xsl:value-of select="tr:pptx-round($h)"/>
-        <xsl:text>bp{\vskip</xsl:text>
-        <xsl:value-of select="tr:pptx-round($pt)"/>
-        <xsl:text>bp\hbox{\hskip </xsl:text>
-        <xsl:value-of select="tr:pptx-round($pl)"/>
-        <xsl:text>bp</xsl:text>
+        <xsl:variable name="cell" select="$row/dbk:phrase[@role eq 'pptx-cell'][position() eq current()]" as="element()?"/>
+        <xsl:variable name="csz" select="if (exists($cell/@css:font-size)) then tr:pptx-num($cell/@css:font-size) else $sz"/>
+        <xsl:variable name="h" select="max((tr:pptx-num($row/@css:row-height), $csz * 1.2))" as="xs:double"/>
+        <xsl:text>{</xsl:text>
         <xsl:if test="exists($cell/@css:background-color)">
-          <xsl:text>\color{</xsl:text>
+          <xsl:text>\cellcolor{</xsl:text>
           <xsl:value-of select="tr:pptx-color-name($cell/@css:background-color)"/>
           <xsl:text>}</xsl:text>
         </xsl:if>
-        <xsl:text>\strut </xsl:text>
+        <xsl:text>\vtop to </xsl:text>
+        <xsl:value-of select="tr:pptx-round($h)"/>
+        <xsl:text>bp{\vskip</xsl:text>
+        <xsl:value-of select="tr:pptx-round(if (exists($cell)) then tr:pptx-num($cell/@css:padding-top) else 0)"/>
+        <xsl:text>bp\hbox{\hskip </xsl:text>
+        <xsl:value-of select="tr:pptx-round(if (exists($cell)) then tr:pptx-num($cell/@css:padding-left) else 0)"/>
+        <xsl:text>bp</xsl:text>
+        <xsl:if test="exists($cell/@css:color)">
+          <xsl:text>\color{</xsl:text>
+          <xsl:value-of select="tr:pptx-color-name($cell/@css:color)"/>
+          <xsl:text>}</xsl:text>
+        </xsl:if>
+        <xsl:if test="$cell/@css:font-weight eq 'bold'">
+          <xsl:text>\bfseries</xsl:text>
+        </xsl:if>
+        <xsl:text>\fontsize{</xsl:text>
+        <xsl:value-of select="tr:pptx-round($csz)"/>
+        <xsl:text>bp}{</xsl:text>
+        <xsl:value-of select="tr:pptx-round($csz * 1.2)"/>
+        <xsl:text>bp}\selectfont\strut </xsl:text>
         <xsl:if test="exists($cell)">
-          <xsl:value-of select="replace(normalize-space(string-join($cell//dbk:para, ' ')), '([%&amp;#{}_\^~])', '\\$1')"/>
+          <xsl:value-of select="normalize-space(string($cell))"/>
         </xsl:if>
         <xsl:text>}\vfil}}</xsl:text>
       </xsl:for-each>
