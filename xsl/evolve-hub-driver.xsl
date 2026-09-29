@@ -25,7 +25,12 @@
   <xsl:param name="table-model"/>
   
   <xsl:variable name="doc-lang" select="/hub/@xml:lang" as="attribute(xml:lang)?"/>
-  <xsl:variable name="hub:list-by-indent-exception-role-regex" select="'^(TOC|[Hh]eading|berschrift)'" as="xs:string"/>  
+  <xsl:variable name="hub:list-by-indent-exception-role-regex" select="'^(TOC|[Hh]eading|berschrift)'" as="xs:string"/>
+
+  <!-- pptx line slots: empty pptx paragraphs occupy a line in the slide
+       layout and must survive the empty-para removal -->
+  <xsl:variable name="hub:keep-empty-para-role-regex-x" as="xs:string"
+                select="'^(pptx-empty-line$|_-_virtual(_-_|$))'"/>
   
   <xsl:template match="phrase[key('hub:style-by-role', @role)/@remap = ('subscript', 'superscript')]" mode="hub:split-at-tab">
     <xsl:element name="{key('hub:style-by-role', @role)/@remap}">

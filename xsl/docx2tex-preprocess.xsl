@@ -31,6 +31,12 @@
                                                   concat(/hub/info/keywordset/keyword[@role eq 'source-dir-uri'], replace(., 'container:', '/')))"/>
     <xsl:attribute name="fileref" select="$fileref"/>
   </xsl:template>
+
+  <!-- pptx line slots: empty pptx paragraphs occupy a line in the slide
+       layout; keep them through this pass -->
+  <xsl:template match="para[@role eq 'pptx-empty-line']" mode="docx2tex-preprocess" priority="10">
+    <xsl:copy-of select="."/>
+  </xsl:template>
   
   <!-- dissolve pseudo tables frequently used for numbered equations -->
   
