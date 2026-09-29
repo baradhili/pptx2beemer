@@ -487,6 +487,9 @@
       <xsl:text>\setbeamersize{text margin left=0pt, text margin right=0pt}&#xa;</xsl:text>
       <xsl:text>\setbeamercolor{normal text}{fg=black}&#xa;</xsl:text>
       <xsl:text>\setbeamercolor{background canvas}{bg=white}&#xa;</xsl:text>
+      <!-- PowerPoint never hyphenates, not even justified text, and never
+           breaks at explicit hyphens -->
+      <xsl:text>\hyphenpenalty=10000\exhyphenpenalty=10000&#xa;</xsl:text>
       <xsl:text>\usepackage[absolute,overlay]{textpos}&#xa;</xsl:text>
       <xsl:text>\setlength{\TPHorizModule}{1bp}\setlength{\TPVertModule}{1bp}\textblockorigin{0pt}{0pt}&#xa;</xsl:text>
       <!-- one font family macro per used family; missing fonts fall back to
@@ -495,6 +498,13 @@
         <xsl:variable name="letter" select="substring('ABCDEFGHIJKLMNOPQRSTUVWXYZ', position(), 1)" as="xs:string"/>
         <xsl:value-of select="concat('\IfFontExistsTF{', ., '}{\newfontfamily\pptxfont', $letter, '{', ., '}}{\newfontfamily\pptxfont', $letter, '{Liberation Sans}\typeout{pptx2beemer WARNING: font &quot;', ., '&quot; not found - install it and rerun; using Liberation Sans}}&#xa;')"/>
       </xsl:for-each>
+      <!-- pptx bullet lists are kernel-generic list environments whose geometry
+           (leftmargin, labelwidth, itemsep ...) is set per list; LaTeX's default
+           \topsep/\parsep/\itemsep padding must be neutralized once here (both
+           \@listi and its \normalsize restore copy \@listI), and auto-numbered
+           pptx lists share one counter -->
+      <xsl:text>\makeatletter\def\@listi{\leftmargin\leftmargini\topsep\z@\parsep\z@\itemsep\z@}\let\@listI\@listi\makeatother&#xa;</xsl:text>
+      <xsl:text>\newcounter{pptxenumi}&#xa;</xsl:text>
     </xsl:if>
     <xsl:for-each select="xml2tex:rgb-to-tex-color( $colors )">
       <xsl:value-of select="concat('\define', ., '&#xa;')"/>
@@ -2715,6 +2725,97 @@
   </template>
 
   <!-- ============================ text boxes ==================== -->
+  <!--
+       Clean textbox emission: every shape stays at its exact pptx position
+       (textblock + optional parbox for middle/bottom anchored boxes), but the
+       paragraph content is regular, editable LaTeX. Consecutive paragraphs
+       that share their resolved font/size/color/alignment are grouped into
+       one declaration line, followed by plain text paragraphs. Bullet
+       paragraphs become kernel-generic list environments whose geometry
+       arguments (leftmargin = pptx marL, labelsep, itemsep = pptx spcBef +
+       spcAft) keep the bullets at their pptx positions.
+  -->
+
+  <!-- paragraph line pitch: pptx percentage spacing (100% = 1.2 x size) or
+       absolute spcPts -->
+  <xsl:function name="tr:pptx-pitch" as="xs:double">
+    <xsl:param name="para" as="element(dbk:para)"/>
+    <xsl:variable name="sz" select="tr:pptx-num($para/@css:font-size)" as="xs:double"/>
+    <xsl:variable name="lh" select="$para/@css:line-height" as="xs:string?"/>
+    <xsl:sequence select="if (exists($lh) and $lh castable as xs:double)
+                          then xs:double($lh) * 1.2 * $sz
+                          else tr:pptx-num($lh)"/>
+  </xsl:function>
+
+  <!-- identity of a paragraph's character/alignment formatting; consecutive
+       paragraphs with the same key share one declaration line -->
+  <xsl:function name="tr:pptx-format-key" as="xs:string">
+    <xsl:param name="para" as="element(dbk:para)"/>
+    <xsl:sequence select="string-join(
+                          ($para/@css:font-family,
+                           $para/@css:font-weight,
+                           $para/@css:font-size,
+                           tr:pptx-pitch($para),
+                           $para/@css:color,
+                           $para/@css:text-align,
+                           $para/@css:margin-left,
+                           $para/@css:text-indent),
+                          '|')"/>
+  </xsl:function>
+
+  <!-- run key: consecutive paragraphs with the same key share one declaration
+       line; bulleted paragraphs additionally merge into one list environment.
+       Character formatting is deliberately not part of the list key: items
+       that deviate get inline overrides, so visually continuous lists stay
+       a single environment -->
+  <xsl:function name="tr:pptx-run-key" as="xs:string">
+    <xsl:param name="para" as="element(dbk:para)"/>
+    <xsl:sequence select="if (exists($para/@mark))
+                          then string-join(('list',
+                                            $para/@mark,
+                                            $para/@css:marker-color,
+                                            $para/@css:marker-size,
+                                            $para/@css:marker-number,
+                                            $para/@css:margin-left,
+                                            $para/@css:text-indent,
+                                            $para/@css:text-align),
+                                           '|')
+                          else concat('para|', tr:pptx-format-key($para))"/>
+  </xsl:function>
+
+  <!-- inter-paragraph glue: spcAft of the previous + spcBef of this paragraph -->
+  <xsl:function name="tr:pptx-spc-before" as="xs:double">
+    <xsl:param name="para" as="element(dbk:para)"/>
+    <xsl:variable name="prev" select="$para/preceding-sibling::dbk:para[1]"/>
+    <xsl:sequence select="if (exists($prev))
+                          then tr:pptx-num($prev/@css:margin-bottom) + tr:pptx-num($para/@css:margin-top)
+                          else 0"/>
+  </xsl:function>
+
+  <!-- declaration line that precedes a run of identically formatted text -->
+  <xsl:function name="tr:pptx-decls" as="xs:string">
+    <xsl:param name="para" as="element(dbk:para)"/>
+    <xsl:param name="with-indents" as="xs:boolean"/>
+    <xsl:variable name="marL" select="tr:pptx-num($para/@css:margin-left)" as="xs:double"/>
+    <xsl:variable name="indent" select="tr:pptx-num($para/@css:text-indent)" as="xs:double"/>
+    <xsl:sequence select="string-join(
+                          ('\pptxfont' || tr:pptx-font-letter($para/@css:font-family),
+                           if ($para/@css:font-weight eq 'bold') then '\bfseries' else (),
+                           '\fontsize{' || tr:pptx-round(tr:pptx-num($para/@css:font-size)) || 'bp}{'
+                                             || tr:pptx-round(tr:pptx-pitch($para)) || 'bp}\selectfont',
+                           if (exists($para/@css:color))
+                           then '\color{' || tr:pptx-color-name($para/@css:color) || '}' else (),
+                           if ($para/@css:text-align eq 'center') then '\centering' else (),
+                           if ($para/@css:text-align eq 'right') then '\raggedleft' else (),
+                           if ($para/@css:text-align = ('left', 'justify')) then '\raggedright' else (),
+                           (: indents only apply to horizontally running text, and
+                                they would override the alignment macros' skips :)
+                           if ($with-indents and $para/@css:text-align = ('left', 'justify') and $marL ne 0)
+                           then '\leftskip=' || tr:pptx-round($marL) || 'bp' else (),
+                           if ($with-indents and $para/@css:text-align = ('left', 'justify') and $indent ne 0)
+                           then '\parindent=' || tr:pptx-round($indent) || 'bp' else ()),
+                          '')"/>
+  </xsl:function>
 
   <template context="dbk:sidebar[@role eq 'pptx-textbox']">
     <xsl:variable name="L" select="tr:pptx-num(@css:left)" as="xs:double"/>
@@ -2750,137 +2851,179 @@
     <xsl:text>,</xsl:text>
     <xsl:value-of select="tr:pptx-round($T + $pt)"/>
     <xsl:text>)</xsl:text>
-    <xsl:choose>
-      <xsl:when test="@css:vertical-align eq 'bottom'">
-        <xsl:text>\parbox[t][</xsl:text>
-        <xsl:value-of select="tr:pptx-round($ih)"/>
-        <xsl:text>bp][b]{</xsl:text>
-        <xsl:value-of select="tr:pptx-round($iw)"/>
-        <xsl:text>bp}</xsl:text>
-      </xsl:when>
-      <xsl:when test="@css:vertical-align eq 'middle'">
-        <xsl:text>\parbox[t][</xsl:text>
-        <xsl:value-of select="tr:pptx-round($ih)"/>
-        <xsl:text>bp][c]{</xsl:text>
-        <xsl:value-of select="tr:pptx-round($iw)"/>
-        <xsl:text>bp}</xsl:text>
-      </xsl:when>
-      <xsl:otherwise>
-        <xsl:text>\parbox[t]{</xsl:text>
-        <xsl:value-of select="tr:pptx-round($iw)"/>
-        <xsl:text>bp}</xsl:text>
-      </xsl:otherwise>
-    </xsl:choose>
-    <xsl:text>{\topskip=0pt\parskip=0pt</xsl:text>
-    <xsl:apply-templates mode="#current"/>
-    <!-- a trailing zero glue ends the box: the last line's depth then counts
-         into the box height instead of hanging below its bottom edge -->
-    <xsl:text>\vskip0bp}\end{textblock}&#xa;</xsl:text>
+    <!-- a fixed-height parbox vertically anchors middle/bottom aligned
+         boxes; top aligned text runs directly in the textblock -->
+    <xsl:if test="@css:vertical-align = ('bottom', 'middle')">
+      <xsl:text>\parbox[t][</xsl:text>
+      <xsl:value-of select="tr:pptx-round($ih)"/>
+      <xsl:text>bp][</xsl:text>
+      <xsl:value-of select="if (@css:vertical-align eq 'bottom') then 'b' else 'c'"/>
+      <xsl:text>]{</xsl:text>
+      <xsl:value-of select="tr:pptx-round($iw)"/>
+      <xsl:text>bp}{</xsl:text>
+    </xsl:if>
+    <xsl:text>\topskip=0pt\parskip=0pt&#xa;</xsl:text>
+    <xsl:for-each-group select="dbk:para" group-adjacent="tr:pptx-run-key(.)">
+      <xsl:variable name="first" select="current-group()[1]" as="element(dbk:para)"/>
+      <!-- list runs: spcAft of the predecessor + spcBef of the first item
+           (plain paragraphs emit their own glue) -->
+      <xsl:if test="exists($first/@mark)">
+        <xsl:variable name="spc" select="tr:pptx-spc-before($first)" as="xs:double"/>
+        <xsl:if test="abs($spc) gt 0.005">
+          <xsl:text>\vskip</xsl:text>
+          <xsl:value-of select="tr:pptx-round($spc)"/>
+          <xsl:text>bp&#xa;</xsl:text>
+        </xsl:if>
+      </xsl:if>
+      <xsl:value-of select="tr:pptx-decls($first, not(exists($first/@mark)))"/>
+      <xsl:text>&#xa;</xsl:text>
+      <xsl:choose>
+        <xsl:when test="exists($first/@mark)">
+          <xsl:variable name="sz" select="tr:pptx-num($first/@css:font-size)" as="xs:double"/>
+          <xsl:variable name="msz" select="if ($first/@css:marker-size castable as xs:double)
+                                          then xs:double($first/@css:marker-size) * $sz else $sz" as="xs:double"/>
+          <xsl:variable name="numbered" select="exists($first/@css:marker-number)" as="xs:boolean"/>
+          <xsl:variable name="marL" select="tr:pptx-num($first/@css:margin-left)" as="xs:double"/>
+          <xsl:variable name="indent" select="tr:pptx-num($first/@css:text-indent)" as="xs:double"/>
+          <!-- bullet geometry: the kernel hangs the label left of the item
+               line, so a first-line indent of one labelsep puts the bullet's
+               right edge at marL and the text at marL + gap, exactly where
+               PowerPoint draws them; the label zone extends into the pptx
+               outdent (marL + indent) -->
+          <xsl:variable name="lsep" select="0.1317 * $sz" as="xs:double"/>
+          <xsl:variable name="lw" as="xs:double"
+                        select="max((-$indent - $lsep, if ($numbered) then 1.6 * $msz else 1.1 * $msz))"/>
+          <xsl:text>\begin{list}{</xsl:text>
+          <xsl:choose>
+            <xsl:when test="exists($first/@css:marker-color) or $first/@css:marker-size castable as xs:double">
+              <xsl:text>{</xsl:text>
+              <xsl:if test="exists($first/@css:marker-color)">
+                <xsl:text>\color{</xsl:text>
+                <xsl:value-of select="tr:pptx-color-name($first/@css:marker-color)"/>
+                <xsl:text>}</xsl:text>
+              </xsl:if>
+              <xsl:text>\fontsize{</xsl:text>
+              <xsl:value-of select="tr:pptx-round($msz)"/>
+              <xsl:text>bp}{</xsl:text>
+              <xsl:value-of select="tr:pptx-round($msz)"/>
+              <xsl:text>bp}\selectfont </xsl:text>
+              <xsl:value-of select="if ($numbered) then '\arabic{pptxenumi}.' else $first/@mark"/>
+              <xsl:text>}</xsl:text>
+            </xsl:when>
+            <xsl:otherwise>
+              <xsl:value-of select="if ($numbered) then '\arabic{pptxenumi}.' else $first/@mark"/>
+            </xsl:otherwise>
+          </xsl:choose>
+          <xsl:text>}{</xsl:text>
+          <xsl:if test="$numbered">
+            <xsl:text>\usecounter{pptxenumi}</xsl:text>
+          </xsl:if>
+          <xsl:value-of select="concat('\leftmargin', tr:pptx-round($marL), 'bp',
+                                        '\labelwidth', tr:pptx-round($lw), 'bp',
+                                        '\labelsep', tr:pptx-round($lsep), 'bp',
+                                        '\itemindent', tr:pptx-round($lsep), 'bp',
+                                        '\itemsep0bp')"/>
+          <xsl:text>}&#xa;</xsl:text>
+          <!-- the list start resets \rightskip etc.; restore the alignment -->
+          <xsl:if test="$first/@css:text-align eq 'center'">
+            <xsl:text>\centering&#xa;</xsl:text>
+          </xsl:if>
+          <xsl:if test="$first/@css:text-align eq 'right'">
+            <xsl:text>\raggedleft&#xa;</xsl:text>
+          </xsl:if>
+          <xsl:if test="$first/@css:text-align = ('left', 'justify')">
+            <xsl:text>\raggedright&#xa;</xsl:text>
+          </xsl:if>
+          <xsl:for-each select="current-group()">
+            <xsl:apply-templates select="." mode="#current">
+              <xsl:with-param name="pptx-item" tunnel="yes" select="true()" as="xs:boolean"/>
+              <xsl:with-param name="pptx-base" tunnel="yes" select="$first" as="element(dbk:para)"/>
+            </xsl:apply-templates>
+            <!-- exact inter-item glue: spcAft of this + spcBef of the next item -->
+            <xsl:if test="position() lt last()">
+              <xsl:variable name="next" select="following-sibling::dbk:para[1]" as="element(dbk:para)?"/>
+              <xsl:variable name="ispc" select="tr:pptx-num(@css:margin-bottom) + tr:pptx-num($next/@css:margin-top)" as="xs:double"/>
+              <xsl:if test="abs($ispc) gt 0.005">
+                <xsl:text>\vskip</xsl:text>
+                <xsl:value-of select="tr:pptx-round($ispc)"/>
+                <xsl:text>bp&#xa;</xsl:text>
+              </xsl:if>
+            </xsl:if>
+          </xsl:for-each>
+          <xsl:text>\end{list}&#xa;</xsl:text>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:apply-templates select="current-group()" mode="#current">
+            <xsl:with-param name="pptx-item" tunnel="yes" select="false()" as="xs:boolean"/>
+          </xsl:apply-templates>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:for-each-group>
+    <xsl:if test="@css:vertical-align = ('bottom', 'middle')">
+      <!-- a trailing zero glue ends the box: the last line's depth then counts
+           into the box height instead of hanging below its bottom edge -->
+      <xsl:text>\vskip0bp}&#xa;</xsl:text>
+    </xsl:if>
+    <xsl:text>\end{textblock}&#xa;</xsl:text>
   </template>
 
   <!-- ============================ paragraphs inside a text box ==================== -->
+  <!-- The declaration line and the inter-paragraph glue are emitted by the
+       text box template per run; a paragraph itself is just its text. List
+       items whose character formatting deviates from the run's base format
+       carry their own inline overrides. -->
 
   <template context="dbk:para[parent::dbk:sidebar[@role eq 'pptx-textbox']]">
-    <xsl:variable name="sz" select="tr:pptx-num(@css:font-size)" as="xs:double"/>
-    <!-- PowerPoint line spacing model (measured against the OnlyOffice render):
-         100 % = pitch 1.2 x font size, first baseline 0.96 x size below the
-         para top, last line descent 0.24 x size - independent of the font -->
-    <xsl:variable name="lh-att" select="@css:line-height" as="xs:string?"/>
-    <xsl:variable name="pct" as="xs:double?"
-                  select="if ($lh-att castable as xs:double) then xs:double($lh-att) else ()"/>
-    <xsl:variable name="L" as="xs:double"
-                  select="if (exists($pct)) then $pct * 1.2 * $sz else tr:pptx-num($lh-att)"/>
-    <xsl:variable name="A" as="xs:double" select="0.8 * $L"/>
-    <xsl:variable name="D" as="xs:double" select="0.2 * $L"/>
-    <!-- inter-paragraph glue: space after the previous para + space before this one -->
-    <xsl:if test="preceding-sibling::dbk:para[1]">
-      <xsl:variable name="aft" select="tr:pptx-num(preceding-sibling::dbk:para[1]/@css:margin-bottom)" as="xs:double"/>
-      <xsl:variable name="bef" select="tr:pptx-num(@css:margin-top)" as="xs:double"/>
-      <xsl:choose>
-        <xsl:when test="$aft + $bef ne 0">
-          <xsl:text>\vskip</xsl:text>
-          <xsl:value-of select="tr:pptx-round($aft + $bef)"/>
-          <xsl:text>bp\prevdepth=-1000pt</xsl:text>
-        </xsl:when>
-        <xsl:otherwise>
-          <xsl:text>\prevdepth=-1000pt</xsl:text>
-        </xsl:otherwise>
-      </xsl:choose>
-    </xsl:if>
-    <xsl:text>{\pptxfont</xsl:text>
-    <xsl:value-of select="tr:pptx-font-letter(@css:font-family)"/>
-    <xsl:if test="@css:font-weight eq 'bold'">
-      <xsl:text>\bfseries</xsl:text>
-    </xsl:if>
-    <xsl:text>\fontsize{</xsl:text>
-    <xsl:value-of select="tr:pptx-round($sz)"/>
-    <xsl:text>bp}{</xsl:text>
-    <xsl:value-of select="tr:pptx-round($L)"/>
-    <xsl:text>bp}\selectfont</xsl:text>
-    <xsl:if test="exists(@css:color)">
-      <xsl:text>\color{</xsl:text>
-      <xsl:value-of select="tr:pptx-color-name(@css:color)"/>
-      <xsl:text>}</xsl:text>
-    </xsl:if>
-    <xsl:text>\baselineskip=</xsl:text>
-    <xsl:value-of select="tr:pptx-round($L)"/>
-    <xsl:text>bp\lineskiplimit=-16000bp\lineskip=0bp\hyphenpenalty=10000\exhyphenpenalty=10000</xsl:text>
-    <!-- leftskip (marL) and first-line outdent (indent) come first; the
-         alignment macros afterwards may override \rightskip/\parfillskip -->
-    <xsl:variable name="marL" select="tr:pptx-num(@css:margin-left)" as="xs:double"/>
-    <xsl:variable name="indent" select="tr:pptx-num(@css:text-indent)" as="xs:double"/>
+    <xsl:param name="pptx-item" tunnel="yes" select="false()" as="xs:boolean"/>
+    <xsl:param name="pptx-base" tunnel="yes" as="element(dbk:para)?"/>
     <xsl:choose>
-      <xsl:when test="@css:text-align eq 'center'">
-        <xsl:text>\leftskip=0pt plus 1fil\rightskip=0pt plus 1fil\parfillskip=0pt</xsl:text>
-      </xsl:when>
-      <xsl:when test="@css:text-align eq 'right'">
-        <xsl:text>\leftskip=0pt plus 1fil\rightskip=0pt\parfillskip=0pt</xsl:text>
+      <xsl:when test="$pptx-item">
+        <xsl:variable name="font-diff" as="xs:boolean"
+                      select="exists($pptx-base) and
+                              (@css:font-family ne $pptx-base/@css:font-family
+                               or (@css:font-weight eq 'bold') ne ($pptx-base/@css:font-weight eq 'bold')
+                               or tr:pptx-num(@css:font-size) ne tr:pptx-num($pptx-base/@css:font-size)
+                               or tr:pptx-pitch(.) ne tr:pptx-pitch($pptx-base))"/>
+        <xsl:variable name="color-diff" as="xs:boolean"
+                      select="exists($pptx-base) and @css:color ne $pptx-base/@css:color"/>
+        <xsl:text>\item </xsl:text>
+        <xsl:if test="$font-diff or $color-diff">
+          <xsl:text>{</xsl:text>
+          <xsl:if test="$font-diff">
+            <xsl:value-of select="'\pptxfont' || tr:pptx-font-letter(@css:font-family)"/>
+            <xsl:if test="@css:font-weight eq 'bold'">
+              <xsl:text>\bfseries</xsl:text>
+            </xsl:if>
+            <xsl:value-of select="concat('\fontsize{', tr:pptx-round(tr:pptx-num(@css:font-size)),
+                                         'bp}{', tr:pptx-round(tr:pptx-pitch(.)), 'bp}\selectfont')"/>
+          </xsl:if>
+          <xsl:if test="$color-diff">
+            <xsl:value-of select="'\color{' || tr:pptx-color-name(@css:color) || '}'"/>
+          </xsl:if>
+          <xsl:text></xsl:text>
+        </xsl:if>
+        <xsl:apply-templates mode="#current"/>
+        <xsl:if test="$font-diff or $color-diff">
+          <xsl:text>}</xsl:text>
+        </xsl:if>
+        <xsl:text>\par&#xa;</xsl:text>
       </xsl:when>
       <xsl:otherwise>
-        <xsl:text>\leftskip=</xsl:text>
-        <xsl:value-of select="tr:pptx-round($marL)"/>
-        <xsl:text>bp\parindent=</xsl:text>
-        <xsl:value-of select="tr:pptx-round($indent)"/>
-        <xsl:text>bp\rightskip=0pt plus 1fil\parfillskip=0pt plus 1fil</xsl:text>
-        <xsl:if test="@css:text-align eq 'justify'">
-          <xsl:text>\rightskip=0pt</xsl:text>
+        <!-- inter-paragraph glue: spcAft of the previous + spcBef of this para -->
+        <xsl:if test="exists(preceding-sibling::dbk:para[1])">
+          <xsl:variable name="pspc" select="tr:pptx-spc-before(.)" as="xs:double"/>
+          <xsl:if test="abs($pspc) gt 0.005">
+            <xsl:text>\vskip</xsl:text>
+            <xsl:value-of select="tr:pptx-round($pspc)"/>
+            <xsl:text>bp&#xa;</xsl:text>
+          </xsl:if>
         </xsl:if>
+        <!-- blank source line between paragraphs for readability -->
+        <xsl:text>&#xa;</xsl:text>
+        <xsl:apply-templates mode="#current"/>
+        <xsl:text>\par&#xa;</xsl:text>
       </xsl:otherwise>
     </xsl:choose>
-    <!-- first line height strut: puts the baseline exactly ascent below the
-         para top, like PowerPoint/FreeType -->
-    <xsl:text>\rule{0bp}{</xsl:text>
-    <xsl:value-of select="tr:pptx-round($A)"/>
-    <xsl:text>bp}</xsl:text>
-    <!-- bullet glyph, right-aligned into the outdent zone -->
-    <xsl:if test="exists(@mark)">
-      <xsl:variable name="msz" select="if (@css:marker-size castable as xs:double)
-                                       then xs:double(@css:marker-size) * $sz else $sz" as="xs:double"/>
-      <xsl:text>\makebox[</xsl:text>
-      <xsl:value-of select="tr:pptx-round(-$indent)"/>
-      <xsl:text>bp][r]{</xsl:text>
-      <xsl:if test="exists(@css:marker-color)">
-        <xsl:text>\color{</xsl:text>
-        <xsl:value-of select="tr:pptx-color-name(@css:marker-color)"/>
-        <xsl:text>}</xsl:text>
-      </xsl:if>
-      <xsl:text>\fontsize{</xsl:text>
-      <xsl:value-of select="tr:pptx-round($msz)"/>
-      <xsl:text>bp}{</xsl:text>
-      <xsl:value-of select="tr:pptx-round($msz)"/>
-      <xsl:text>bp}\selectfont </xsl:text>
-      <xsl:value-of select="@mark"/>
-      <xsl:text>}\hspace{</xsl:text>
-      <xsl:value-of select="tr:pptx-round(0.1317 * $sz)"/>
-      <xsl:text>bp}</xsl:text>
-    </xsl:if>
-    <xsl:apply-templates mode="#current"/>
-    <!-- last line depth strut (nobreak keeps it on the last line) -->
-    <xsl:text>\nobreak\rule[-</xsl:text>
-    <xsl:value-of select="tr:pptx-round($D)"/>
-    <xsl:text>bp]{0bp}{</xsl:text>
-    <xsl:value-of select="tr:pptx-round($D)"/>
-    <xsl:text>bp}\par}</xsl:text>
   </template>
 
   <!-- phrase font/size switches inside canvas paras -->

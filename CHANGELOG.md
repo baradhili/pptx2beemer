@@ -1,3 +1,52 @@
+# Changelog — readable textbox LaTeX (canvas mode, second pass)
+
+Goal of this pass: make the generated `.tex` usable as LaTeX. The first canvas pass emitted
+every paragraph as a single line of primitives (struts, `\lineskiplimit`, `\makebox`
+bullets, `\prevdepth`); this pass replaces that with regular constructs — declaration
+lines, blank-line-separated paragraphs and kernel-generic `list` environments — while
+keeping every textblock at its exact pptx coordinates and the text metrics on the
+PowerPoint model.
+
+## What changed (conf/conf.xml, pptx canvas templates only)
+
+- **Text boxes**: a `\parbox[t][H][b|c]{W}` wrapper is emitted only for middle/bottom
+  anchored boxes; top-anchored text runs directly inside the `textpos` block. Shape
+  background rects, pictures, SVG art, tables and notes are unchanged.
+- **Paragraph runs**: consecutive paragraphs with identical resolved font/size/lead/
+  color/alignment collapse into one declaration line
+  (`\pptxfontA\bfseries\fontsize{12bp}{14.4bp}\selectfont\color{black}\raggedright`)
+  followed by plain text paragraphs separated by blank lines. Alignment uses the
+  standard `\raggedright`/`\centering`/`\raggedleft`. Inter-paragraph glue stays exact:
+  `\vskip{spcAft+spcBef}bp` is emitted between paragraphs whenever it is non-zero.
+- **Bullets**: bulleted runs become `\begin{list}{•}{\leftmargin…\labelwidth…\labelsep…
+  \itemindent…\itemsep0bp}`; auto-numbered ones use a shared `pptxenumi` counter.
+  Geometry maps the pptx values onto the kernel list so that the bullet's right edge,
+  the text start (`marL` + gap) and every line-break column are identical to the
+  previous pixel-faithful emission (`\itemindent` = one labelsep makes the kernel hang
+  the label into the pptx outdent zone). Inter-item glue is an explicit `\vskip`
+  between items, so per-item spcBef/spcAft survive. Visually continuous lists whose
+  items vary in color/size stay one list; deviating items carry inline overrides
+  (`{\color{…}…}`, `{\fontsize{…}\selectfont…}`).
+- **Preamble** (canvas mode only): `\@listi`/`\@listI` redefined without `\topsep`/
+  `\parsep`/`\itemsep` padding (both macros — `\normalsize` restores `\@listi` from
+  `\@listI`), one `pptxenumi` counter, and document-wide `\hyphenpenalty=10000
+  \exhyphenpenalty=10000` (PowerPoint never hyphenates, not even at explicit hyphens).
+
+## Fidelity
+
+Dropping the per-paragraph struts moves the first baseline of each run from the old
+constant `0.8 x lead` to the font's real ascent — which is what PowerPoint/OnlyOffice
+use (measured: 13.45 pt vs 13.44 pt model at 14 bp Verdana; the old emission sat ~0.2 em
+too low). Everything else is bit-identical geometry: textblock coordinates, bullet/text
+x positions (within 0.02 pt in isolated A/B), line pitch, wrapping columns and vertical
+anchoring. Compared page-by-page against the previous output (230 slides, 96 dpi raster
+diff): median slide < 1 % differing pixels, worst slide 12 % — entirely small block
+shifts from the corrected first-baseline model, no reflow. Example 2 (old conf vs new
+conf, both fresh): 3.7 % differing pixels. All five example decks convert and compile
+with zero LaTeX errors.
+
+---
+
 # Changelog — pptx canvas conversion (pixel-faithful beamer output)
 
 Goal of this pass: reproduce the OnlyOffice (x2t) rendering of the four test decks in
