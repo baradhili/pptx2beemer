@@ -139,7 +139,8 @@
   <xsl:function name="pptx2hub:ph-type" as="xs:string?">
     <xsl:param name="ph" as="element(p:ph)?"/>
     <xsl:param name="layout" as="document-node()?"/>
-    <xsl:sequence select="($ph/@type,
+    <xsl:sequence select="if (empty($ph)) then () else (
+                           $ph/@type,
                            $layout//p:ph[@idx = ($ph/@idx, '0')[1]]/@type,
                            $layout//p:ph[not(@idx)][not(@type = ('ftr', 'dt', 'sldNum'))]/@type
                            )[1]"/>
@@ -559,6 +560,85 @@
     </dbk:hub>
   </xsl:template>
 
+  <!-- ====================== shape style references ====================== -->
+
+  <!-- effective fill of a shape: the explicit spPr fill, else the p:style
+       fillRef resolved through the theme fill styles. phClr stops stand for
+       the fillRef color; transforms (lumMod, shade, ...) are carried over
+       onto a synthetic srgbClr so they go through the normal (linear-light)
+       color resolution. Returns a:solidFill or a:gradFill. -->
+  <xsl:function name="pptx2hub:effective-fill" as="element()?">
+    <xsl:param name="shape" as="element()"/>
+    <xsl:param name="theme" as="document-node()?"/>
+    <xsl:variable name="explicit" select="$shape/p:spPr/(a:solidFill | a:gradFill)[1]"/>
+    <xsl:variable name="fref" select="$shape/p:style/a:fillRef"/>
+    <xsl:variable name="idx" as="xs:integer"
+                  select="max((xs:integer(number(($fref/@idx, '1')[1])), 1))"/>
+    <xsl:variable name="style" as="element()?"
+                  select="if (exists($theme) and exists($fref))
+                          then ($theme//a:fmtScheme/a:fillStyleLst/*[position() eq $idx])[1]
+                          else ()"/>
+    <xsl:choose>
+      <xsl:when test="exists($explicit)">
+        <xsl:sequence select="$explicit"/>
+      </xsl:when>
+      <xsl:when test="empty($style) or exists($shape/p:spPr/a:noFill)"/>
+      <xsl:when test="exists($style/self::a:solidFill)">
+        <a:solidFill>
+          <a:srgbClr val="{substring-after((pptx2hub:color-hex($fref, $theme), '#000000')[1], '#')}">
+            <xsl:copy-of select="$style//a:schemeClr[@val eq 'phClr'][1]/*"/>
+          </a:srgbClr>
+        </a:solidFill>
+      </xsl:when>
+      <xsl:when test="exists($style/self::a:gradFill/a:lin)">
+        <a:gradFill>
+          <xsl:copy-of select="$style/self::a:gradFill/a:lin"/>
+          <a:gsLst>
+            <xsl:for-each select="$style/self::a:gradFill/a:gsLst/a:gs">
+              <a:gs pos="{@pos}">
+                <a:srgbClr val="{substring-after((pptx2hub:color-hex($fref, $theme), '#000000')[1], '#')}">
+                  <xsl:copy-of select=".//a:schemeClr[@val eq 'phClr'][1]/*"/>
+                </a:srgbClr>
+              </a:gs>
+            </xsl:for-each>
+          </a:gsLst>
+        </a:gradFill>
+      </xsl:when>
+    </xsl:choose>
+  </xsl:function>
+
+  <!-- effective outline of a shape as a color + width pair: the explicit
+       spPr line, else the p:style lnRef through the theme line styles -->
+  <xsl:function name="pptx2hub:effective-ln" as="element(pptx2hub:ln)?">
+    <xsl:param name="shape" as="element()"/>
+    <xsl:param name="theme" as="document-node()?"/>
+    <xsl:variable name="ln" select="$shape/p:spPr/a:ln[a:solidFill][1]"/>
+    <xsl:variable name="lref" select="$shape/p:style/a:lnRef"/>
+    <xsl:variable name="idx" as="xs:integer"
+                  select="max((xs:integer(number(($lref/@idx, '1')[1])), 1))"/>
+    <xsl:variable name="lstyle" as="element()?"
+                  select="if (exists($theme) and exists($lref))
+                          then ($theme//a:fmtScheme/a:lnStyleLst/*[position() eq $idx])[1]
+                          else ()"/>
+    <xsl:choose>
+      <xsl:when test="exists($ln)">
+        <pptx2hub:ln color="{pptx2hub:color-hex($ln/a:solidFill, $theme)}"
+                     width="{xs:double(($ln/@w, 9525)[1])}"/>
+      </xsl:when>
+      <xsl:when test="exists($lstyle)">
+        <xsl:variable name="ln-fill" as="element(a:solidFill)">
+          <a:solidFill>
+            <a:srgbClr val="{substring-after((pptx2hub:color-hex($lref, $theme), '#000000')[1], '#')}">
+              <xsl:copy-of select="$lstyle//a:schemeClr[@val eq 'phClr'][1]/*"/>
+            </a:srgbClr>
+          </a:solidFill>
+        </xsl:variable>
+        <pptx2hub:ln color="{(pptx2hub:color-hex($ln-fill, $theme), '#000000')[1]}"
+                     width="{xs:double(($lstyle/@w, 9525)[1])}"/>
+      </xsl:when>
+    </xsl:choose>
+  </xsl:function>
+
   <!-- ====================== slides ====================== -->
 
   <xsl:template match="p:sld" mode="pptx2hub:slide">
@@ -623,20 +703,26 @@
         select="if (exists($bg-pr/self::p:bgRef))
                 then pptx2hub:color-hex($bg-pr, $theme) else ()"/>
       <xsl:variable name="bg-grad" as="element()?">
-        <xsl:if test="exists($bg-grad-el) and exists($bg-base-hex)">
-          <a:gradFill>
-            <a:lin ang="{($bg-grad-el/a:lin/@ang, 0)[1]}"/>
-            <a:gsLst>
-              <xsl:for-each select="$bg-grad-el/a:gsLst/a:gs">
-                <a:gs pos="{@pos}">
-                  <a:srgbClr val="{substring-after($bg-base-hex, '#')}">
-                    <xsl:copy-of select="a:schemeClr/*"/>
-                  </a:srgbClr>
-                </a:gs>
-              </xsl:for-each>
-            </a:gsLst>
-          </a:gradFill>
-        </xsl:if>
+        <xsl:choose>
+          <xsl:when test="exists($bg-pr/self::p:bgRef) and exists($bg-grad-el) and exists($bg-base-hex)">
+            <a:gradFill>
+              <a:lin ang="{($bg-grad-el/a:lin/@ang, 0)[1]}"/>
+              <a:gsLst>
+                <xsl:for-each select="$bg-grad-el/a:gsLst/a:gs">
+                  <a:gs pos="{@pos}">
+                    <a:srgbClr val="{substring-after($bg-base-hex, '#')}">
+                      <xsl:copy-of select="a:schemeClr/*"/>
+                    </a:srgbClr>
+                  </a:gs>
+                </xsl:for-each>
+              </a:gsLst>
+            </a:gradFill>
+          </xsl:when>
+          <!-- a direct bgPr gradient carries ordinary scheme colors per stop -->
+          <xsl:when test="exists($bg-pr/self::p:bgPr)">
+            <xsl:sequence select="$bg-grad-el"/>
+          </xsl:when>
+        </xsl:choose>
       </xsl:variable>
       <xsl:if test="exists($bg)">
         <xsl:attribute name="css:background-color" select="pptx2hub:color-hex($bg, $theme)"/>
@@ -725,22 +811,63 @@
 
     <xsl:variable name="ph-type" select="pptx2hub:ph-type(p:nvSpPr/p:nvPr/p:ph, $layout)"/>
     <xsl:variable name="has-text" select="exists(p:txBody//(a:t | a:fld)[normalize-space(.)])"/>
-    <xsl:variable name="fill" select="p:spPr/a:solidFill"/>
-    <!-- shapes flagged hidden are not rendered; text on layout/master
-         decorations is not rendered either (reference renderer behaviour:
-         only their graphics show through onto the slide) -->
-    <xsl:if test="not(p:nvSpPr/p:cNvPr/@hidden = '1')
-                  and not(exists($is-decor) and $is-decor and $has-text)">
+    <xsl:variable name="fill" select="pptx2hub:effective-fill(., $theme)"/>
+    <!-- shapes flagged hidden are not rendered; layout/master placeholder
+         prompts never reach this template (only non-placeholder decorations
+         are selected), and their graphics and text both show through -->
+    <xsl:if test="not(p:nvSpPr/p:cNvPr/@hidden = '1')">
 
     <!-- chrome placeholders without visible content are not rendered -->
     <xsl:if test="not($ph-type = ('dt', 'ftr', 'sldNum')) or $has-text or exists($fill)">
       <xsl:choose>
         <xsl:when test="$has-text">
+          <!-- non-rect (or gradient-filled) shapes carry their geometry as
+               SVG art under the text; the text box then skips its own
+               background so the shape is not drawn twice -->
+          <xsl:variable name="geom" select="p:spPr/(a:custGeom | a:prstGeom)[1]"/>
+          <xsl:variable name="art-underlay" as="xs:boolean"
+                        select="exists($geom)
+                                and (not($geom/self::a:prstGeom)
+                                     or not($geom/@prst eq 'rect')
+                                     or exists(p:spPr/a:gradFill))"/>
+          <xsl:if test="$art-underlay">
+            <xsl:variable name="box" select="pptx2hub:abs-box(pptx2hub:effective-xfrm(., $layout, $master), $groups)"/>
+            <xsl:variable name="rot" as="xs:integer"
+                          select="xs:integer((pptx2hub:effective-xfrm(., $layout, $master)/@rot, 0)[1]) mod 21600000"/>
+            <xsl:variable name="swap" as="xs:boolean" select="$rot = 5400000 or $rot = 16200000"/>
+            <xsl:variable name="vbox" as="xs:double+"
+                          select="if ($swap)
+                                  then ($box[1] + ($box[3] - $box[4]) div 2,
+                                        $box[2] + ($box[4] - $box[3]) div 2,
+                                        $box[4], $box[3])
+                                  else $box"/>
+            <xsl:if test="$box[3] gt 0 and $box[4] gt 0">
+              <dbk:figure role="pptx-art">
+                <dbk:mediaobject>
+                  <dbk:imageobject>
+                    <dbk:imagedata>
+                      <xsl:attribute name="css:position-left" select="pptx2hub:emu-to-pt($vbox[1])"/>
+                      <xsl:attribute name="css:position-top" select="pptx2hub:emu-to-pt($vbox[2])"/>
+                      <xsl:attribute name="css:width" select="pptx2hub:emu-to-pt($vbox[3])"/>
+                      <xsl:attribute name="css:height" select="pptx2hub:emu-to-pt($vbox[4])"/>
+                      <xsl:call-template name="pptx2hub:art-svg">
+                        <xsl:with-param name="box" select="$box"/>
+                        <xsl:with-param name="geom" select="$geom"/>
+                        <xsl:with-param name="theme" select="$theme"/>
+                        <xsl:with-param name="rot" select="$rot"/>
+                      </xsl:call-template>
+                    </dbk:imagedata>
+                  </dbk:imageobject>
+                </dbk:mediaobject>
+              </dbk:figure>
+            </xsl:if>
+          </xsl:if>
           <xsl:apply-templates select="." mode="pptx2hub:textbox">
             <xsl:with-param name="theme" select="$theme" tunnel="yes"/>
             <xsl:with-param name="layout" select="$layout" tunnel="yes"/>
             <xsl:with-param name="master" select="$master" tunnel="yes"/>
             <xsl:with-param name="groups" select="$groups" tunnel="yes"/>
+            <xsl:with-param name="art-underlay" select="$art-underlay" tunnel="yes" as="xs:boolean"/>
           </xsl:apply-templates>
         </xsl:when>
         <xsl:otherwise>
@@ -783,13 +910,15 @@
             </xsl:when>
             <xsl:otherwise>
             <!-- plain filled rectangle -->
-            <xsl:if test="exists($fill) and $box[3] gt 0 and not(p:spPr/a:custGeom)">
+            <xsl:variable name="rect-fill" select="pptx2hub:effective-fill(., $theme)"/>
+            <xsl:if test="exists($rect-fill) and $box[3] gt 0 and not(p:spPr/a:custGeom)
+                          and $rect-fill/self::a:solidFill">
             <dbk:para role="pptx-rect">
               <xsl:attribute name="css:left" select="pptx2hub:emu-to-pt($box[1])"/>
               <xsl:attribute name="css:top" select="pptx2hub:emu-to-pt($box[2])"/>
               <xsl:attribute name="css:width" select="pptx2hub:emu-to-pt($box[3])"/>
               <xsl:attribute name="css:height" select="pptx2hub:emu-to-pt($box[4])"/>
-              <xsl:attribute name="css:background-color" select="pptx2hub:color-hex($fill, $theme)"/>
+              <xsl:attribute name="css:background-color" select="pptx2hub:color-hex($rect-fill, $theme)"/>
               <xsl:if test="p:spPr/a:prstGeom/@prst eq 'roundRect'">
                 <xsl:variable name="adj" select="xs:double((p:spPr/a:prstGeom/a:avLst/a:gd/@fmla[matches(., '^val ')],
                                       p:spPr/a:prstGeom/a:avLst/a:gd/@fmla)[1])"/>
@@ -797,10 +926,10 @@
                                select="pptx2hub:emu-to-pt(replace(string($adj), '^val ', '') cast as xs:double
                                        div 100000 * min(($box[3], $box[4])))"/>
               </xsl:if>
-              <xsl:variable name="ln" select="p:spPr/a:ln[a:solidFill][exists(@w)]"/>
-              <xsl:if test="exists($ln)">
-                <xsl:attribute name="css:border-color" select="pptx2hub:color-hex($ln/a:solidFill, $theme)"/>
-                <xsl:attribute name="css:border-width" select="pptx2hub:emu-to-pt(xs:double($ln/@w))"/>
+              <xsl:variable name="rect-ln" select="pptx2hub:effective-ln(., $theme)"/>
+              <xsl:if test="exists($rect-ln)">
+                <xsl:attribute name="css:border-color" select="$rect-ln/@color"/>
+                <xsl:attribute name="css:border-width" select="pptx2hub:emu-to-pt(xs:double($rect-ln/@width))"/>
               </xsl:if>
             </dbk:para>
           </xsl:if>
@@ -824,22 +953,24 @@
     <xsl:variable name="h" select="$box[4]" as="xs:double"/>
     <!-- PresentationML wraps DrawingML geometry in p:spPr (not a:spPr) -->
     <xsl:variable name="spPr" select="$geom/parent::p:spPr" as="element()?"/>
+    <xsl:variable name="shape" select="$geom/ancestor::p:sp[1]" as="element()?"/>
     <!-- gradient fills become SVG linear gradients; solid fills keep their
-         color; shapes without a fill declaration (and without a p:style
-         fillRef, which these decks do not use) are transparent -->
+         color; without a fill declaration (and without a resolvable p:style
+         fillRef) shapes are transparent -->
+    <xsl:variable name="eff-fill" select="if (exists($shape)) then pptx2hub:effective-fill($shape, $theme) else $spPr/a:solidFill"/>
     <xsl:variable name="grad-id" as="xs:string?"
-                  select="if (exists($spPr/a:gradFill/a:lin)) then concat('pg', generate-id($geom)) else ()"/>
+                  select="if (exists($eff-fill/self::a:gradFill/a:lin)) then concat('pg', generate-id($geom)) else ()"/>
     <xsl:variable name="fill2" as="xs:string"
                   select="if ($spPr/a:noFill) then 'none'
-                          else if ($spPr/a:solidFill) then (pptx2hub:color-hex($spPr/a:solidFill, $theme), 'none')[1]
+                          else if (exists($eff-fill/self::a:solidFill)) then (pptx2hub:color-hex($eff-fill/self::a:solidFill, $theme), 'none')[1]
                           else if (exists($grad-id)) then concat('url(#', $grad-id, ')')
-                          else if (exists($spPr/a:gradFill)) then (pptx2hub:color-hex($spPr/a:gradFill//a:gs[1], $theme), 'none')[1]
+                          else if (exists($eff-fill/self::a:gradFill)) then (pptx2hub:color-hex($eff-fill/self::a:gradFill//a:gs[1], $theme), 'none')[1]
                           else 'none'"/>
-    <xsl:variable name="ln" select="$spPr/a:ln[a:solidFill][1]" as="element()?"/>
+    <xsl:variable name="eff-ln" select="if (exists($shape)) then pptx2hub:effective-ln($shape, $theme) else ()"/>
     <xsl:variable name="stroke" as="xs:string"
-                  select="if (exists($ln)) then (pptx2hub:color-hex($ln/a:solidFill, $theme), 'black')[1] else 'none'"/>
+                  select="if (exists($eff-ln)) then ($eff-ln/@color, 'black')[1] else 'none'"/>
     <xsl:variable name="stroke-w" as="xs:double"
-                  select="if (exists($ln/@w)) then xs:double($ln/@w) div 12700 else 0.75"/>
+                  select="if (exists($eff-ln)) then xs:double($eff-ln/@width) div 12700 else 0.75"/>
     <!-- the tunnelled xfrm scales the path coordinates onto the absolute
          shape extent (group children included) -->
     <xsl:variable name="xfrm" as="element(a:xfrm)">
@@ -900,7 +1031,7 @@
       <xsl:attribute name="viewBox" select="concat('0 0 ', round($vw div 12700 * 100) div 100, ' ', round($vh div 12700 * 100) div 100)"/>
       <xsl:if test="exists($grad-id)">
         <svg:defs>
-          <xsl:sequence select="pptx2hub:linear-gradient($spPr/a:gradFill, $theme, $grad-id)"/>
+          <xsl:sequence select="pptx2hub:linear-gradient($eff-fill/self::a:gradFill, $theme, $grad-id)"/>
         </svg:defs>
       </xsl:if>
       <svg:g>
@@ -949,19 +1080,28 @@
     <xsl:param name="master" as="document-node()?" tunnel="yes"/>
     <xsl:param name="theme" as="document-node()?" tunnel="yes"/>
     <xsl:param name="groups" as="element(p:grpSpPr)*" select="()" tunnel="yes"/>
+    <!-- true when the shape geometry is drawn as SVG art under this text
+         box; the text box then carries no fill or border of its own -->
+    <xsl:param name="art-underlay" as="xs:boolean?" tunnel="yes"/>
 
     <xsl:variable name="chain" select="pptx2hub:lst-chain(., $layout, $master)"/>
     <xsl:variable name="box" select="pptx2hub:abs-box(pptx2hub:effective-xfrm(., $layout, $master), $groups)"/>
     <xsl:variable name="bodyPr" select="p:txBody/a:bodyPr"/>
-    <!-- anchor inherits from the layout/master placeholder bodyPr -->
+    <!-- anchor and insets inherit from the layout/master placeholder bodyPr
+         (the master frequently zeroes the insets for title/body placeholders) -->
     <xsl:variable name="lay-ph" select="pptx2hub:matching-ph(p:nvSpPr/p:nvPr/p:ph, $layout)"/>
     <xsl:variable name="mas-ph" select="pptx2hub:matching-ph($lay-ph/p:nvSpPr/p:nvPr/p:ph, $master)"/>
+    <xsl:variable name="lay-bodyPr" select="$lay-ph/p:txBody/a:bodyPr"/>
+    <xsl:variable name="mas-bodyPr" select="$mas-ph/p:txBody/a:bodyPr"/>
     <xsl:variable name="anchor" select="($bodyPr/@anchor,
-                                         $lay-ph/p:txBody/a:bodyPr/@anchor,
-                                         $mas-ph/p:txBody/a:bodyPr/@anchor)[1]"/>
+                                         $lay-bodyPr/@anchor,
+                                         $mas-bodyPr/@anchor)[1]"/>
     <xsl:variable name="font-scale" as="xs:double"
                   select="xs:double(($bodyPr/a:normAutofit/@fontScale, 100000)[1]) div 100000"/>
-    <xsl:variable name="fill" select="p:spPr/a:solidFill"/>
+    <xsl:variable name="fill" select="if (exists($art-underlay) and $art-underlay)
+                                      then () else pptx2hub:effective-fill(., $theme)"/>
+    <xsl:variable name="ln" select="if (exists($art-underlay) and $art-underlay)
+                                    then () else pptx2hub:effective-ln(., $theme)"/>
     <xsl:variable name="ph-type" select="pptx2hub:ph-type(p:nvSpPr/p:nvPr/p:ph, $layout)"/>
 
     <dbk:sidebar role="pptx-textbox">
@@ -969,10 +1109,10 @@
       <xsl:attribute name="css:top" select="pptx2hub:emu-to-pt($box[2])"/>
       <xsl:attribute name="css:width" select="pptx2hub:emu-to-pt($box[3])"/>
       <xsl:attribute name="css:height" select="pptx2hub:emu-to-pt($box[4])"/>
-      <xsl:attribute name="css:padding-left" select="pptx2hub:emu-to-pt(xs:double(($bodyPr/@lIns, 91440)[1]))"/>
-      <xsl:attribute name="css:padding-right" select="pptx2hub:emu-to-pt(xs:double(($bodyPr/@rIns, 91440)[1]))"/>
-      <xsl:attribute name="css:padding-top" select="pptx2hub:emu-to-pt(xs:double(($bodyPr/@tIns, 45720)[1]))"/>
-      <xsl:attribute name="css:padding-bottom" select="pptx2hub:emu-to-pt(xs:double(($bodyPr/@bIns, 45720)[1]))"/>
+      <xsl:attribute name="css:padding-left" select="pptx2hub:emu-to-pt(xs:double(($bodyPr/@lIns, $lay-bodyPr/@lIns, $mas-bodyPr/@lIns, 91440)[1]))"/>
+      <xsl:attribute name="css:padding-right" select="pptx2hub:emu-to-pt(xs:double(($bodyPr/@rIns, $lay-bodyPr/@rIns, $mas-bodyPr/@rIns, 91440)[1]))"/>
+      <xsl:attribute name="css:padding-top" select="pptx2hub:emu-to-pt(xs:double(($bodyPr/@tIns, $lay-bodyPr/@tIns, $mas-bodyPr/@tIns, 45720)[1]))"/>
+      <xsl:attribute name="css:padding-bottom" select="pptx2hub:emu-to-pt(xs:double(($bodyPr/@bIns, $lay-bodyPr/@bIns, $mas-bodyPr/@bIns, 45720)[1]))"/>
       <xsl:attribute name="css:vertical-align"
                      select="if ($anchor eq 'b') then 'bottom'
                              else if ($anchor eq 'ctr') then 'middle'
@@ -980,16 +1120,15 @@
       <xsl:if test="$font-scale ne 1">
         <xsl:attribute name="css:font-scale" select="$font-scale"/>
       </xsl:if>
-      <xsl:if test="exists($fill)">
+      <xsl:if test="exists($fill) and exists($fill/self::a:solidFill)">
         <xsl:attribute name="css:background-color" select="pptx2hub:color-hex($fill, $theme)"/>
         <xsl:if test="p:spPr/a:prstGeom/@prst eq 'roundRect'">
           <xsl:attribute name="css:corner-radius" select="'0.1'"/>
         </xsl:if>
       </xsl:if>
-      <xsl:variable name="ln" select="p:spPr/a:ln[a:solidFill][exists(@w)]"/>
       <xsl:if test="exists($ln)">
-        <xsl:attribute name="css:border-color" select="pptx2hub:color-hex($ln/a:solidFill, $theme)"/>
-        <xsl:attribute name="css:border-width" select="pptx2hub:emu-to-pt(xs:double($ln/@w))"/>
+        <xsl:attribute name="css:border-color" select="$ln/@color"/>
+        <xsl:attribute name="css:border-width" select="pptx2hub:emu-to-pt(xs:double($ln/@width))"/>
       </xsl:if>
       <xsl:apply-templates select="p:txBody/a:p" mode="pptx2hub:para">
         <xsl:with-param name="chain" select="$chain" tunnel="yes"/>
@@ -1012,9 +1151,29 @@
     <xsl:variable name="lvl" select="xs:integer((a:pPr/@lvl, 0)[1])"/>
     <xsl:variable name="runs" select="a:r[a:t[normalize-space()]] | a:fld[a:t[normalize-space()]]" as="element()*"/>
 
-    <!-- skip paragraphs without visible content (empty paras render no line in
-         PowerPoint unless they carry bullets; spcAft still applies via the
-         following paragraph's spcBef) -->
+    <!-- a paragraph without visible runs still occupies one line slot in the
+         PowerPoint/OnlyOffice layout; resolve its size through endParaRPr -->
+    <xsl:if test="empty($runs) and exists(a:pPr | a:endParaRPr | preceding-sibling::a:p | following-sibling::a:p)">
+      <xsl:variable name="rPr" select="(a:endParaRPr, $runs[1]/a:rPr)[1]"/>
+      <xsl:variable name="sz0" select="pptx2hub:run-size($rPr, $chain, $lvl, $font-scale)"/>
+      <xsl:variable name="lnSpc0" select="pptx2hub:pPr-child(a:pPr, $chain, $lvl, 'lnSpc')"/>
+      <xsl:variable name="spcBef0" select="pptx2hub:pPr-child(a:pPr, $chain, $lvl, 'spcBef')"/>
+      <xsl:variable name="spcAft0" select="pptx2hub:pPr-child(a:pPr, $chain, $lvl, 'spcAft')"/>
+      <dbk:para role="pptx-empty-line">
+        <xsl:attribute name="css:font-size" select="pptx2hub:hpt-to-pt($sz0)"/>
+        <xsl:attribute name="css:line-height"
+                       select="if (exists($lnSpc0/a:spcPct)) then string(xs:double($lnSpc0/a:spcPct/@val) div 100000)
+                               else if (exists($lnSpc0/a:spcPts)) then pptx2hub:hpt-to-pt(xs:double($lnSpc0/a:spcPts/@val))
+                               else '1'"/>
+        <xsl:if test="exists($spcBef0/a:spcPts)">
+          <xsl:attribute name="css:margin-top" select="pptx2hub:hpt-to-pt(xs:double($spcBef0/a:spcPts/@val))"/>
+        </xsl:if>
+        <xsl:if test="exists($spcAft0/a:spcPts)">
+          <xsl:attribute name="css:margin-bottom" select="pptx2hub:hpt-to-pt(xs:double($spcAft0/a:spcPts/@val))"/>
+        </xsl:if>
+      </dbk:para>
+    </xsl:if>
+
     <xsl:if test="exists($runs)">
       <xsl:variable name="pPr" select="a:pPr"/>
       <xsl:variable name="first-rPr" select="$runs[1]/a:rPr"/>
