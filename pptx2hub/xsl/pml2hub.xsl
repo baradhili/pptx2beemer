@@ -145,17 +145,32 @@
                            )[1]"/>
   </xsl:function>
 
-  <!-- the layout placeholder element matching a slide placeholder -->
+  <!-- the placeholder element matching a slide/layout placeholder: ECMA-376
+       inheritance is by type for typed placeholders (title, subTitle, ...)
+       and by idx for (body) level placeholders. Shapes without a placeholder
+       element inherit nothing from the layout/master. -->
   <xsl:function name="pptx2hub:matching-ph" as="element(p:sp)?">
     <xsl:param name="ph" as="element(p:ph)?"/>
     <xsl:param name="part" as="document-node()?"/>
-    <xsl:sequence select="($part//p:sp[p:nvSpPr/p:nvPr/p:ph[@idx = ($ph/@idx, '0')[1]]][1],
-                           $part//p:sp[p:nvSpPr/p:nvPr/p:ph[not(@idx)][not(@type = ('ftr','dt','sldNum'))]][1]
-                           )[1]"/>
+    <xsl:variable name="want-idx" select="string(($ph/@idx, '0')[1])" as="xs:string"/>
+    <xsl:variable name="want-type" select="string($ph/@type)" as="xs:string"/>
+    <xsl:sequence select="if (empty($ph)) then () else (
+      (: same type and idx :)
+      $part//p:sp[p:nvSpPr/p:nvPr/p:ph[string(@idx) eq $want-idx][string(@type) eq $want-type]][1],
+      (: same type (typed placeholders are unique per part) :)
+      $part//p:sp[p:nvSpPr/p:nvPr/p:ph[string(@type) eq $want-type]][1],
+      (: typeless slide placeholder: level placeholder with the same idx :)
+      $part//p:sp[p:nvSpPr/p:nvPr/p:ph[not(@type)][string(@idx) eq $want-idx]][1],
+      (: any placeholder with the same idx :)
+      $part//p:sp[p:nvSpPr/p:nvPr/p:ph[string(@idx) eq $want-idx]][1],
+      (: last resort: the part's only un-numbered, non-footer placeholder :)
+      $part//p:sp[p:nvSpPr/p:nvPr/p:ph[not(@idx)][not(@type = ('ftr','dt','sldNum'))]][1]
+      )[1]"/>
   </xsl:function>
 
   <!-- lstStyle inheritance chain for a shape: own, layout ph, master ph,
-       master txStyles (by ph class), presentation defaultTextStyle -->
+       shape style fontRef (non-placeholder shapes), master txStyles (by ph
+       class), presentation defaultTextStyle -->
   <xsl:function name="pptx2hub:lst-chain" as="element()*">
     <xsl:param name="shape" as="element()"/>
     <xsl:param name="layout" as="document-node()?"/>
@@ -166,23 +181,54 @@
     <!-- the master ph matches the layout ph (its idx/type), per ECMA-376 -->
     <xsl:variable name="mas-ph" select="pptx2hub:matching-ph($lay-ph/p:nvSpPr/p:nvPr/p:ph, $master)"/>
     <xsl:variable name="tx-style" as="element()?"
-      select="if ($type = ('title', 'ctrTitle')) then $master//p:txStyles/a:titleStyle
+      select="if ($type = ('title', 'ctrTitle')) then $master//p:txStyles/p:titleStyle
               else if ($type = ('body', 'subTitle', 'obj') or (exists($ph) and empty($type)))
-                then $master//p:txStyles/a:bodyStyle
-              else $master//p:txStyles/a:otherStyle"/>
+                then $master//p:txStyles/p:bodyStyle
+              else $master//p:txStyles/p:otherStyle"/>
+    <!-- a non-placeholder shape's p:style fontRef is the default for its text:
+         the referenced theme font (minor/major) and the fontRef color. It
+         slots in before the master otherStyle. -->
+    <xsl:variable name="fontref-style" as="element(a:lstStyle)?">
+      <xsl:if test="empty($ph) and exists($shape/p:style/a:fontRef)">
+        <xsl:variable name="fref" select="$shape/p:style/a:fontRef"/>
+        <a:lstStyle>
+          <xsl:for-each select="1 to 9">
+            <xsl:element name="a:lvl{.}pPr" namespace="http://schemas.openxmlformats.org/drawingml/2006/main">
+              <a:defRPr>
+                <xsl:if test="exists($fref/(a:srgbClr | a:schemeClr | a:sysClr | a:prstClr))">
+                  <a:solidFill>
+                    <xsl:copy-of select="$fref/(a:srgbClr | a:schemeClr | a:sysClr | a:prstClr)[1]"/>
+                  </a:solidFill>
+                </xsl:if>
+                <xsl:if test="$fref/@idx eq 'minor'">
+                  <a:latin typeface="+mn-lt"/>
+                </xsl:if>
+                <xsl:if test="$fref/@idx eq 'major'">
+                  <a:latin typeface="+mj-lt"/>
+                </xsl:if>
+              </a:defRPr>
+            </xsl:element>
+          </xsl:for-each>
+        </a:lstStyle>
+      </xsl:if>
+    </xsl:variable>
     <xsl:sequence select="($shape/p:txBody/a:lstStyle,
                            $lay-ph/p:txBody/a:lstStyle,
                            $mas-ph/p:txBody/a:lstStyle,
+                           $fontref-style,
                            $tx-style,
                            $presentation-root/*/p:defaultTextStyle)"/>
   </xsl:function>
 
-  <!-- the lvl{n}pPr of a chain, in chain order (document order within each) -->
+  <!-- the lvl{n}pPr of a chain, in chain order (document order within each).
+       A `for` expression is essential here: a plain `$chain/*[...]` path
+       returns nodes from different documents in document-load order, which
+       would let the presentation defaults overrule layout and master. -->
   <xsl:function name="pptx2hub:lvl-pPrs" as="element()*">
     <xsl:param name="chain" as="element()*"/>
     <xsl:param name="lvl" as="xs:integer"/>
     <xsl:variable name="name" select="concat('lvl', max((1, min(($lvl, 9)))), 'pPr')"/>
-    <xsl:sequence select="$chain/*[local-name() = $name]"/>
+    <xsl:sequence select="for $c in $chain return $c/*[local-name() = $name]"/>
   </xsl:function>
 
   <!-- first-defined paragraph property across the chain: $pPr first, then
@@ -301,12 +347,15 @@
     <xsl:sequence select="xs:integer(min((255, max((0, round($u * 255))))))"/>
   </xsl:function>
 
-  <!-- lumMod/lumOff/shade/tint; other transforms are ignored -->
+  <!-- lumMod/lumOff/shade/tint; other transforms are ignored. PowerPoint/
+       OnlyOffice apply the transforms in linear light (gamma 2.2), e.g.
+       tint 75 % on black is 0.25 linear = #888888, not 25 % of 255 = #3F3F3F -->
   <xsl:function name="pptx2hub:apply-color-transforms" as="xs:string?">
     <xsl:param name="rgb" as="xs:double+"/>
     <xsl:param name="transforms" as="element()*"/>
+    <xsl:variable name="lin" select="for $c in $rgb return math:pow($c, 2.2)" as="xs:double+"/>
     <xsl:variable name="result" as="xs:double+"
-      select="fold-left($transforms, $rgb,
+      select="fold-left($transforms, $lin,
                function ($acc as xs:double+, $t as element()) as xs:double+ {
                  let $v := xs:double($t/@val) div 100000
                  return
@@ -318,7 +367,7 @@
                })"/>
     <xsl:variable name="hex" as="xs:string"
       select="string-join(for $c in $result
-                          return pptx2hub:hex2(pptx2hub:unit-to-byte($c)), '')"/>
+                          return pptx2hub:hex2(pptx2hub:unit-to-byte(math:pow(max((0e0, min((1e0, $c)))), 1 div 2.2))), '')"/>
     <xsl:sequence select="concat('#', upper-case($hex))"/>
   </xsl:function>
 
@@ -454,7 +503,12 @@
     <xsl:param name="chain" as="element()*"/>
     <xsl:param name="lvl" as="xs:integer"/>
     <xsl:param name="theme" as="document-node()?"/>
-    <xsl:sequence select="pptx2hub:color-hex(($rPr/a:solidFill,
+    <xsl:sequence select="if (exists($rPr/a:hlinkClick))
+                          (: OnlyOffice paints hyperlink runs with the theme's
+                             hlink color, overriding an explicit solidFill :)
+                          then (pptx2hub:color-hex($theme//a:themeElements/a:clrScheme/a:hlink, $theme),
+                                '#0563C1')[1]
+                          else pptx2hub:color-hex(($rPr/a:solidFill,
                               for $d in pptx2hub:defRPrs($chain, $lvl) return $d/a:solidFill)[1],
                               $theme)"/>
   </xsl:function>
